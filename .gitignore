@@ -58,3 +58,10 @@ crawl_cache/
 
 .github/
 docs/
+
+# Combat arena
+combat/.firecrawl/
+combat/results.json
+
+# Rust build artifacts
+grub_md/target/

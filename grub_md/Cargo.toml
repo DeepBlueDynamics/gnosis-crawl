@@ -1,0 +1,18 @@
+[package]
+name = "grub_md"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[lib]
+name = "grub_md"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+scraper = "0.21"
+ego-tree = "0.9"
+url = "2"
+regex = "1"
+once_cell = "1"

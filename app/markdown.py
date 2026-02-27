@@ -11,6 +11,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Try to import the Rust native extension for fast markdown generation
+try:
+    from grub_md import generate_markdown as _rust_generate
+    _HAS_RUST = True
+    logger.info("grub_md Rust extension loaded — using fast path")
+except ImportError:
+    _HAS_RUST = False
+
 # Pre-compile regex patterns
 LINK_PATTERN = re.compile(r'!?\[([^\]]+)\]\(([^)]+?)(?:\s+"([^"]*)")?\)')
 
@@ -428,7 +436,15 @@ class MarkdownGenerator:
                 references_markdown="",
                 clean_markdown=""
             )
-        
+
+        # Fast path: use Rust native extension if available
+        if _HAS_RUST:
+            try:
+                d = _rust_generate(html, base_url, dedupe_tables)
+                return MarkdownResult(**d)
+            except Exception as e:
+                logger.warning(f"Rust grub_md failed, falling back to Python: {e}")
+
         try:
             # Filter content for better extraction
             filtered_html = self.content_filter.filter_content(html)
