@@ -9,6 +9,7 @@ from combat.adapters.base import CrawlResult
 from combat.conftest import SPEED_URLS
 
 CRAWL_TIMEOUT = 45  # seconds — hard cap per adapter per URL
+INTER_ADAPTER_DELAY = 10  # seconds between adapter runs to avoid rate-limiting
 
 
 @pytest.mark.combat
@@ -20,11 +21,16 @@ async def test_single_url_speed(adapters, combat_results, url):
     No assertions — this is data-collection only.  Results are stored in
     the shared ``combat_results`` dict and written to ``results.json``
     after the session.
+
+    Grub always runs first (baseline).  Remaining adapters run in shuffled
+    order with a delay between each to avoid rate-limiting.
     """
     url_key = url.split("//")[1].rstrip("/")
     row: dict = {}
 
-    for adapter in adapters:
+    for i, adapter in enumerate(adapters):
+        if i > 0:
+            await asyncio.sleep(INTER_ADAPTER_DELAY)
         try:
             result = await asyncio.wait_for(adapter.crawl_one(url), timeout=CRAWL_TIMEOUT)
         except asyncio.TimeoutError:
@@ -33,6 +39,10 @@ async def test_single_url_speed(adapters, combat_results, url):
             "elapsed_ms": round(result.elapsed_ms, 1),
             "success": result.success,
             "word_count": result.word_count,
+            "char_count": result.char_count,
+            "has_headings": result.has_headings,
+            "has_links": result.has_links,
+            "content_ratio": round(result.content_ratio, 3),
             "error": result.error,
             "timings": result.timings,
         }

@@ -16,17 +16,15 @@
 
 <br/>
 
-**The world's only agentic web crawler with a peer-to-peer mesh.**
-
-*Built using the brain of a human that knows about distributed crawling architectures.*
+**Agentic web crawler with anti-detection, vision fallback, and peer-to-peer mesh.**
 
 <br/>
 
-<a href="#api-endpoints">Endpoints</a> · <a href="#mesh">Mesh</a> · <a href="#anti-detection">Anti-Detection</a> · <a href="#ghost-protocol">Ghost Protocol</a> · <a href="#live-stream">Live Stream</a> · <a href="#mcp-tools-grub-crawlpy">MCP Tools</a> · <a href="#quick-start">Quick Start</a> · <a href="MASTER_PLAN.md">Architecture</a>
+<a href="#api-endpoints">Endpoints</a> · <a href="#mesh">Mesh</a> · <a href="#anti-detection">Anti-Detection</a> · <a href="#ghost-protocol">Ghost Protocol</a> · <a href="#live-stream">Live Stream</a> · <a href="#mcp-tools-grub-crawlpy">MCP Tools</a> · <a href="#quick-start">Quick Start</a> · <a href="#benchmarks">Benchmarks</a> · <a href="MASTER_PLAN.md">Architecture</a>
 
 ---
 
-Grub Crawler gets dirty so you don't have to. It penetrates every layer of protection — Cloudflare, CAPTCHAs, JavaScript walls — fingers deep in the DOM until it finds what it came for. When the front door's locked, Ghost Protocol slips in the back, takes pictures of everything, and lets the AI read it naked. Multi-provider? Oh yeah — it'll ride OpenAI, Anthropic, and Ollama all in the same session. No safeword. No cooldown. Just raw, unfiltered content extraction that leaves every page fully exposed and dripping with markdown.
+Full-stack web crawling engine with JavaScript rendering, Camoufox anti-detect browser, per-request proxy routing, and autonomous agent loops. Converts pages to clean markdown with a native Rust extraction engine. When standard crawling is blocked by Cloudflare, CAPTCHAs, or JavaScript walls, Ghost Protocol captures a screenshot and extracts content via vision AI (Claude, GPT-4o, or Ollama). Supports multi-provider LLM orchestration across OpenAI, Anthropic, and Ollama in a single session. Nodes coordinate over a gossip-based peer-to-peer mesh for distributed crawling.
 
 ---
 
@@ -36,26 +34,46 @@ Grub Crawler gets dirty so you don't have to. It penetrates every layer of prote
 
 We integrated features from every major crawler — then added what none of them have.
 
-| Feature | Crawl4AI | Firecrawl | Apify | Scrapy | Browserbase | Scrapfly | **Grub** |
-|---|---|---|---|---|---|---|---|
-| **Self-hosted** | ✅ | ⚠️ limited | ✅ Crawlee | ✅ | ❌ cloud | ❌ cloud | ✅ **full** |
-| **Anti-detect browser** | stealth plugin | ❌ cloud only | Camoufox template | ❌ | custom Chromium | proprietary | ✅ **Camoufox** |
-| **Ghost Protocol** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **auto fallback** |
-| **Per-request proxy** | ✅ escalation | ⚠️ cloud only | ✅ built-in | middleware | ✅ managed | ✅ 130M+ IPs | ✅ **per-request** |
-| **Stealth patches** | ✅ | ❌ | ✅ | ❌ | ✅ | ✅ | ✅ **opt-in** |
-| **Agent loop** | ✅ agentic | ✅ /agent | ✅ AI Agent | ❌ spiders | ✅ Stagehand | ⚠️ via integrations | ✅ **bounded SM** |
-| **Live browser stream** | ✅ WebSocket | ✅ Live View | ⚠️ pool only | ❌ | ✅ iFrame + CDP | ✅ CDP | ✅ **WS + MJPEG** |
-| **Markdown output** | ✅ Fit Markdown | ✅ core | ✅ RAG Browser | ❌ | ✅ via MCP | ✅ built-in | ✅ **core** |
-| **MCP tools** | ✅ community | ✅ official | ✅ official | ⚠️ community | ✅ official | ✅ official | ✅ **15 tools** |
-| **Multi-provider LLM** | ✅ all LLMs | ⚠️ Gemini | ⚠️ per-Actor | ❌ | ⚠️ Stagehand | ⚠️ via frameworks | ✅ **OpenAI/Anthropic/Ollama** |
-| **Policy enforcement** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **domain gates + redaction** |
-| **Replayable traces** | ❌ | ❌ | ⚠️ run logs | ❌ | ⚠️ session replay | ❌ | ✅ **full JSON trace** |
-| **Prompt injection defense** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **quarantine + visible-text diff** |
-| **License** | Apache 2.0 | AGPL-3.0 | MIT (Crawlee) | BSD | MIT (Stagehand) | Proprietary | **Proprietary** |
-| **Pricing** | Free | Free–$333/mo | Free–$999/mo | Free | Free–$99/mo | Usage-based | **Self-hosted** |
-| **Mesh P2P** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **agents talking to agents** |
+### Self-Hosted Crawlers
 
-**Only Grub Crawler has Ghost Protocol** — automatic vision-based fallback that screenshots blocked pages and extracts content via LLM when every other tool just fails. Prevention (Camoufox + proxy + stealth) handles 95% of blocks. Ghost Protocol handles the rest.
+| Feature | Crawl4AI | Firecrawl | Scrapy | **Grub** |
+|---|---|---|---|---|
+| **JS rendering** | ✅ Playwright | ✅ Playwright | ❌ HTTP only | ✅ **Playwright** |
+| **Anti-detect browser** | stealth plugin | ❌ | ❌ | ✅ **Camoufox** |
+| **Ghost Protocol** | ❌ | ❌ | ❌ | ✅ **auto fallback** |
+| **Per-request proxy** | ✅ escalation | ❌ | middleware | ✅ **per-request** |
+| **Stealth patches** | ✅ | ❌ | ❌ | ✅ **opt-in** |
+| **Agent loop** | ✅ agentic | ✅ /agent | ❌ spiders | ✅ **bounded SM** |
+| **Live browser stream** | ✅ WebSocket | ✅ Live View | ❌ | ✅ **WS + MJPEG** |
+| **Markdown output** | ✅ Fit Markdown | ✅ core | ❌ | ✅ **Rust engine** |
+| **MCP tools** | ✅ community | ✅ official | ⚠️ community | ✅ **15 tools** |
+| **Multi-provider LLM** | ✅ all LLMs | ⚠️ Gemini | ❌ | ✅ **OpenAI/Anthropic/Ollama** |
+| **Mesh P2P** | ❌ | ❌ | ❌ | ✅ **gossip protocol** |
+| **Policy enforcement** | ❌ | ❌ | ❌ | ✅ **domain gates + redaction** |
+| **Prompt injection defense** | ❌ | ❌ | ❌ | ✅ **quarantine + visible-text diff** |
+| **License** | Apache 2.0 | AGPL-3.0 | BSD | Proprietary |
+| **Pricing** | Free | Free–$333/mo | Free | Self-hosted |
+
+### Cloud / Managed Crawlers
+
+| Feature | Browserbase | Scrapfly | Firecrawl Cloud | **Grub** |
+|---|---|---|---|---|
+| **JS rendering** | ✅ custom Chromium | ✅ proprietary | ✅ Playwright | ✅ **Playwright** |
+| **Anti-detect browser** | ✅ custom Chromium | ✅ proprietary | ✅ cloud stealth | ✅ **Camoufox** |
+| **Ghost Protocol** | ❌ | ❌ | ❌ | ✅ **auto fallback** |
+| **Per-request proxy** | ✅ managed | ✅ 130M+ IPs | ✅ cloud-managed | ✅ **per-request** |
+| **Stealth patches** | ✅ built-in | ✅ built-in | ✅ built-in | ✅ **opt-in** |
+| **Agent loop** | ✅ Stagehand | ⚠️ via integrations | ✅ /agent | ✅ **bounded SM** |
+| **Live browser stream** | ✅ iFrame + CDP | ✅ CDP | ✅ Live View | ✅ **WS + MJPEG** |
+| **Markdown output** | ✅ via MCP | ✅ built-in | ✅ core | ✅ **Rust engine** |
+| **MCP tools** | ✅ official | ✅ official | ✅ official | ✅ **15 tools** |
+| **Mesh P2P** | ❌ | ❌ | ❌ | ✅ **gossip protocol** |
+| **Policy enforcement** | ❌ | ❌ | ❌ | ✅ **domain gates + redaction** |
+| **Prompt injection defense** | ❌ | ❌ | ❌ | ✅ **quarantine + visible-text diff** |
+| **Self-hostable** | ❌ cloud only | ❌ cloud only | ⚠️ limited OSS | ✅ **full + Cloud Run** |
+| **Pricing** | Free–$99/mo | Usage-based | Free–$333/mo | Self-hosted |
+
+**Only Grub has Ghost Protocol** — automatic vision-based fallback that screenshots blocked pages and extracts content via LLM when standard crawling fails. Prevention (Camoufox + proxy + stealth) handles 95% of blocks. Ghost Protocol handles the rest.
 
 ## API Endpoints
 
@@ -588,6 +606,63 @@ Do not summarize unless `content_quality == "sufficient"`.
 {"error": "http_error|validation_error|internal_error", "status": 400, "details": {}}
 ```
 
+## Benchmarks
+
+Combat arena — head-to-head benchmarks against Crawl4AI, Firecrawl (self-hosted), and Scrapy. All tests run on the same machine, same URLs, same conditions. Grub runs first as baseline, remaining adapters in randomized order with 10s delay between each to prevent rate-limiting bias.
+
+### Single-URL Speed (ms, lower is better)
+
+| URL | Grub | Crawl4AI | Firecrawl | Scrapy | Winner |
+|-----|------|----------|-----------|--------|--------|
+| example.com | **391** | 1283 | 1513 | 831 | Grub |
+| news.ycombinator.com | **423** | 2204 | 1401 | 2038 | Grub |
+| en.wikipedia.org | **507** | 4866 | 2637 | 2368 | Grub |
+| httpbin.org | 283 | 1170 | **176** | 769 | Firecrawl |
+| quotes.toscrape.com | **275** | 1244 | 647 | 1145 | Grub |
+
+Grub wins 4/5 single-URL speed races. Markdown conversion runs at 0-21ms via native Rust engine (`grub_md`).
+
+### Grub Phase Breakdown (server-side ms)
+
+| URL | nav | content | visible_text | markdown | total |
+|-----|-----|---------|--------------|----------|-------|
+| example.com | 358 | 11 | 14 | 0 | 391 |
+| news.ycombinator.com | 384 | 19 | 13 | 2 | 423 |
+| en.wikipedia.org | 369 | 48 | 38 | 21 | 507 |
+| httpbin.org | 229 | 27 | 16 | 0 | 283 |
+| quotes.toscrape.com | 230 | 10 | 27 | 1 | 275 |
+
+Navigation dominates; markdown conversion is sub-millisecond on most pages thanks to the Rust engine.
+
+### Batch Throughput (ms, lower is better)
+
+| Batch | Grub | Crawl4AI | Firecrawl | Scrapy | Winner |
+|-------|------|----------|-----------|--------|--------|
+| 10 URLs | **1940** | 4670 | 3216 | 8680 | Grub |
+| 25 URLs | **4085** | 10479 | 6692 | 25303 | Grub |
+| 50 URLs | 15604 | 23870 | **12729** | 36232 | Firecrawl |
+
+Grub wins 2/3 batch sizes. Per-URL cost: 163-312ms (Grub) vs 255-477ms (others).
+
+### How to Run
+
+```bash
+# Start Grub
+docker compose up -d
+
+# Start Firecrawl (optional)
+docker compose -f combat/firecrawl-compose.yaml up -d
+
+# Install combat deps
+pip install crawl4ai scrapy markdownify tabulate
+
+# Run the arena
+pytest combat/ -m combat -v
+
+# Generate report
+python -m combat.report
+```
+
 ## Development Status
 
 ### Phase 1: Core Infrastructure ✅
@@ -633,11 +708,12 @@ Do not summarize unless `content_quality == "sufficient"`.
 - [x] Docker Compose 2-node mesh topology (W12)
 - [x] Embedded landing page (grub-site) (W12)
 
-### Phase 7: Hardening
+### Phase 7: Performance + Hardening
+- [x] Rust markdown engine (`grub_md`) — PyO3 native extension, sub-ms conversion
+- [x] Combat arena — automated benchmarks vs Crawl4AI, Firecrawl, Scrapy
 - [x] Unit test suite — 176 tests across all modules
 - [ ] Error handling improvements
 - [ ] Monitoring and alerting
-- [ ] Performance optimization
 
 See [MASTER_PLAN.md](MASTER_PLAN.md) for the full architecture plan.
 

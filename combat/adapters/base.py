@@ -30,7 +30,14 @@ class CrawlResult:
         self.has_headings = bool(re.search(r"^#{1,6}\s", self.markdown, re.MULTILINE)) if self.markdown else False
         self.has_links = bool(re.search(r"\[.+?\]\(.+?\)", self.markdown)) if self.markdown else False
         if self.html and self.markdown:
-            self.content_ratio = len(self.markdown) / len(self.html)
+            # Strip tags/scripts/styles to get visible text length.
+            # Raw HTML bytes is an unfair denominator because some adapters
+            # return the full page while others return pre-filtered content.
+            visible = re.sub(r'<script[^>]*>.*?</script>', '', self.html, flags=re.DOTALL | re.IGNORECASE)
+            visible = re.sub(r'<style[^>]*>.*?</style>', '', visible, flags=re.DOTALL | re.IGNORECASE)
+            visible = re.sub(r'<[^>]+>', '', visible)
+            visible_len = len(visible.strip())
+            self.content_ratio = len(self.markdown) / visible_len if visible_len else 0.0
         else:
             self.content_ratio = 0.0
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import random
 
 import pytest
 import pytest_asyncio
@@ -76,6 +77,13 @@ async def adapters():
 
     if not available:
         pytest.skip("No crawl adapters available")
+
+    # Grub always runs first (baseline), shuffle the rest to avoid
+    # order-dependent rate-limiting advantages.
+    grub = [a for a in available if a.name == "Grub"]
+    others = [a for a in available if a.name != "Grub"]
+    random.shuffle(others)
+    available = grub + others
 
     yield available
 
