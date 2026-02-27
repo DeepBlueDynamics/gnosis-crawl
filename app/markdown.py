@@ -65,24 +65,30 @@ class HTMLToMarkdownConverter:
         """Convert HTML to markdown."""
         if not html or not html.strip():
             return ""
-        
+
+        import sys
+        old_limit = sys.getrecursionlimit()
         try:
+            # Large pages (e.g. Wikipedia) can have deeply nested DOMs
+            sys.setrecursionlimit(max(old_limit, 5000))
             soup = BeautifulSoup(html, 'html.parser')
-            
+
             # Remove unwanted elements
             self._remove_unwanted_elements(soup)
-            
+
             # Process the soup
             markdown = self._process_element(soup)
-            
+
             # Clean up the markdown
             markdown = self._clean_markdown(markdown)
-            
+
             return markdown
-            
+
         except Exception as e:
             logger.error(f"Error converting HTML to markdown: {e}")
             return f"Error converting content: {str(e)}"
+        finally:
+            sys.setrecursionlimit(old_limit)
     
     def _remove_unwanted_elements(self, soup: BeautifulSoup) -> None:
         """Remove script, style, and other unwanted elements."""
@@ -403,8 +409,10 @@ class ContentFilter:
         """Try to extract the main content area."""
         # Look for common main content selectors
         main_selectors = [
-            'main', 'article', '.content', '.main-content',
-            '.post-content', '.entry-content', '#content', '#main'
+            'main', 'article', '.mw-parser-output',
+            '.content', '.main-content',
+            '.post-content', '.entry-content',
+            '#mw-content-text', '#content', '#main'
         ]
         
         for selector in main_selectors:

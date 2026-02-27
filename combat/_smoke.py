@@ -17,9 +17,10 @@ async def main():
     from combat.adapters.grub import GrubAdapter
     from combat.adapters.crawl4ai import Crawl4AIAdapter
     from combat.adapters.scrapy_adapter import ScrapyAdapter
+    from combat.adapters.firecrawl import FirecrawlAdapter
 
     adapters = []
-    for name, cls in [("Grub", GrubAdapter), ("Crawl4AI", Crawl4AIAdapter), ("Scrapy", ScrapyAdapter)]:
+    for name, cls in [("Grub", GrubAdapter), ("Crawl4AI", Crawl4AIAdapter), ("Scrapy", ScrapyAdapter), ("Firecrawl", FirecrawlAdapter)]:
         a = cls()
         try:
             await asyncio.wait_for(a.setup(), timeout=30)

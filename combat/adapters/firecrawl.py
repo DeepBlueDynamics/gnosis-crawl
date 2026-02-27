@@ -25,10 +25,15 @@ class FirecrawlAdapter(CrawlerAdapter):
 
     def __init__(self) -> None:
         self.base_url = os.environ.get("FIRECRAWL_URL", "http://localhost:3002")
+        self.api_key = os.environ.get("FIRECRAWL_API_KEY", "fc-combat-test")
         self._client: httpx.AsyncClient | None = None
 
     async def setup(self) -> None:
-        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=60)
+        self._client = httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=60,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+        )
         try:
             resp = await self._client.get("/", timeout=5)
             if resp.status_code >= 500:
