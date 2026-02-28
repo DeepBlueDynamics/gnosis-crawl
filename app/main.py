@@ -409,6 +409,16 @@ if _SITE_INDEX and _SITE_INDEX.is_file():
         """Serve the embedded Grub landing page."""
         return HTMLResponse(content=_site_html, status_code=200)
 
+# API documentation page
+_DOCS_INDEX = _SITE_DIR / "docs.html" if _SITE_DIR and _SITE_DIR.is_dir() else None
+if _DOCS_INDEX and _DOCS_INDEX.is_file():
+    _docs_html = _DOCS_INDEX.read_text(encoding="utf-8")
+
+    @app.get("/docs", response_class=HTMLResponse)
+    async def serve_docs():
+        """Serve the API documentation page."""
+        return HTMLResponse(content=_docs_html, status_code=200)
+
 # AHP Tool Routes - Dynamic tool execution (CATCH-ALL - must be last)
 @app.get("/{tool_name}")
 async def execute_tool(

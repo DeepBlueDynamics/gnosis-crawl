@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Grub Crawler — API Documentation</title>
+<meta name="description" content="API reference and usage guide for Grub Crawler endpoints." />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>&#x1f577;</text></svg>" />
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#080808;--surface:#111;--surface2:#1a1a1a;--border:#222;
+  --text:#ccc;--text-dim:#888;--text-bright:#eee;
+  --accent:#00d4ff;--accent-dim:#00d4ff33;
+  --green:#22c55e;--red:#ef4444;--yellow:#eab308;--purple:#a78bfa;
+  --mono:'SF Mono','Cascadia Code','Fira Code',monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6;min-height:100vh}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* Layout */
+.layout{display:flex;min-height:100vh}
+.sidebar{width:260px;position:fixed;top:0;left:0;bottom:0;background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;padding:20px 0;z-index:10}
+.main{margin-left:260px;flex:1;padding:40px 60px;max-width:900px}
+
+/* Sidebar */
+.sidebar-logo{padding:0 20px 20px;border-bottom:1px solid var(--border);margin-bottom:16px}
+.sidebar-logo a{color:var(--text-bright);font-weight:700;font-size:15px;letter-spacing:0.5px}
+.sidebar-logo span{color:var(--text-dim);font-size:12px;display:block;margin-top:2px}
+.nav-group{padding:8px 0}
+.nav-group-title{padding:4px 20px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim)}
+.nav-link{display:block;padding:5px 20px 5px 28px;font-size:13px;color:var(--text-dim);transition:all 0.15s}
+.nav-link:hover{color:var(--text-bright);background:var(--surface2);text-decoration:none}
+.nav-link.active{color:var(--accent);border-right:2px solid var(--accent)}
+.nav-method{font-family:var(--mono);font-size:10px;font-weight:700;margin-right:6px;padding:1px 4px;border-radius:3px}
+.nav-method.get{color:var(--green)}
+.nav-method.post{color:var(--accent)}
+.nav-method.ws{color:var(--purple)}
+
+/* Content */
+h1{font-size:28px;font-weight:700;color:var(--text-bright);margin-bottom:8px}
+h2{font-size:22px;font-weight:600;color:var(--text-bright);margin:48px 0 16px;padding-top:24px;border-top:1px solid var(--border)}
+h2:first-of-type{border-top:none;margin-top:32px}
+h3{font-size:16px;font-weight:600;color:var(--text-bright);margin:32px 0 12px}
+p{margin-bottom:12px;color:var(--text)}
+.subtitle{color:var(--text-dim);font-size:15px;margin-bottom:32px}
+
+/* Endpoint cards */
+.endpoint{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:24px;overflow:hidden}
+.endpoint-header{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none}
+.endpoint-header:hover{background:var(--surface2)}
+.method{font-family:var(--mono);font-size:12px;font-weight:700;padding:3px 8px;border-radius:4px;min-width:48px;text-align:center}
+.method.post{background:#00d4ff22;color:var(--accent)}
+.method.get{background:#22c55e22;color:var(--green)}
+.method.ws{background:#a78bfa22;color:var(--purple)}
+.path{font-family:var(--mono);font-size:14px;color:var(--text-bright)}
+.desc{color:var(--text-dim);font-size:13px;margin-left:auto}
+.endpoint-body{padding:18px}
+
+/* Code blocks */
+pre{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:14px 16px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.5;margin:10px 0 16px;color:var(--text)}
+code{font-family:var(--mono);font-size:13px}
+.inline-code{background:var(--surface2);padding:2px 6px;border-radius:3px;font-size:12px}
+
+/* Labels */
+.label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-dim);margin-bottom:6px}
+
+/* Params table */
+table{width:100%;border-collapse:collapse;margin:10px 0 16px;font-size:13px}
+th{text-align:left;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-size:11px;text-transform:uppercase;letter-spacing:0.5px}
+td{padding:8px 12px;border:1px solid var(--border);vertical-align:top}
+td:first-child{font-family:var(--mono);color:var(--accent);white-space:nowrap}
+td:nth-child(2){color:var(--purple);font-family:var(--mono);font-size:12px}
+.required{color:var(--red);font-size:10px;margin-left:4px}
+.default{color:var(--text-dim);font-size:12px}
+
+/* Response fields */
+.field-list{margin:8px 0 16px;padding-left:0;list-style:none}
+.field-list li{padding:4px 0;font-size:13px;border-bottom:1px solid var(--border)}
+.field-list li:last-child{border-bottom:none}
+.field-name{font-family:var(--mono);color:var(--accent);margin-right:8px}
+.field-type{color:var(--purple);font-size:12px;margin-right:8px}
+
+/* Badges */
+.badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 6px;border-radius:3px;text-transform:uppercase;letter-spacing:0.5px}
+.badge-live{background:#22c55e22;color:var(--green)}
+.badge-stealth{background:#ff8c0022;color:#ff8c00}
+
+/* Tip boxes */
+.tip{background:var(--accent-dim);border-left:3px solid var(--accent);padding:12px 16px;border-radius:0 6px 6px 0;margin:16px 0;font-size:13px}
+.tip strong{color:var(--accent)}
+.warn{background:#eab30822;border-left:3px solid var(--yellow);padding:12px 16px;border-radius:0 6px 6px 0;margin:16px 0;font-size:13px}
+.warn strong{color:var(--yellow)}
+
+/* Mobile */
+@media(max-width:768px){
+  .sidebar{display:none}
+  .main{margin-left:0;padding:20px}
+}
+</style>
+</head>
+<body>
+<div class="layout">
+
+<!-- Sidebar -->
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <a href="/">GRUB CRAWLER</a>
+    <span>API Documentation</span>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-title">Getting Started</div>
+    <a class="nav-link" href="#overview">Overview</a>
+    <a class="nav-link" href="#authentication">Authentication</a>
+    <a class="nav-link" href="#base-url">Base URL</a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-title">Core Crawling</div>
+    <a class="nav-link" href="#crawl"><span class="nav-method post">POST</span>/api/crawl</a>
+    <a class="nav-link" href="#markdown"><span class="nav-method post">POST</span>/api/markdown</a>
+    <a class="nav-link" href="#batch"><span class="nav-method post">POST</span>/api/batch</a>
+    <a class="nav-link" href="#raw"><span class="nav-method post">POST</span>/api/raw</a>
+    <a class="nav-link" href="#view"><span class="nav-method get">GET</span>/view</a>
+    <a class="nav-link" href="#download"><span class="nav-method get">GET</span>/download</a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-title">Agent + Ghost</div>
+    <a class="nav-link" href="#agent-run"><span class="nav-method post">POST</span>/api/agent/run</a>
+    <a class="nav-link" href="#agent-status"><span class="nav-method get">GET</span>/api/agent/status</a>
+    <a class="nav-link" href="#ghost"><span class="nav-method post">POST</span>/api/agent/ghost</a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-title">Cache</div>
+    <a class="nav-link" href="#cache-search"><span class="nav-method post">POST</span>/api/cache/search</a>
+    <a class="nav-link" href="#cache-list"><span class="nav-method get">GET</span>/api/cache/list</a>
+    <a class="nav-link" href="#cache-upsert"><span class="nav-method post">POST</span>/api/cache/upsert</a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-title">Live Stream</div>
+    <a class="nav-link" href="#stream-ws"><span class="nav-method ws">WS</span>/stream/{id}</a>
+    <a class="nav-link" href="#stream-mjpeg"><span class="nav-method get">GET</span>/stream/{id}/mjpeg</a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-title">Mesh</div>
+    <a class="nav-link" href="#mesh-peers"><span class="nav-method get">GET</span>/mesh/peers</a>
+    <a class="nav-link" href="#mesh-status"><span class="nav-method get">GET</span>/mesh/status</a>
+    <a class="nav-link" href="#mesh-execute"><span class="nav-method post">POST</span>/mesh/execute</a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-title">System</div>
+    <a class="nav-link" href="#health"><span class="nav-method get">GET</span>/health</a>
+    <a class="nav-link" href="#tools"><span class="nav-method get">GET</span>/tools</a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-title">Guides</div>
+    <a class="nav-link" href="#anti-detection">Anti-Detection</a>
+    <a class="nav-link" href="#google-search">Google Search</a>
+    <a class="nav-link" href="#content-quality">Content Quality</a>
+  </div>
+</nav>
+
+<!-- Main Content -->
+<div class="main">
+
+<h1>Grub Crawler API</h1>
+<p class="subtitle">Full-stack web crawling with anti-detection, vision fallback, and peer-to-peer mesh.</p>
+
+<!-- ─── GETTING STARTED ─────────────────────────────────── -->
+
+<h2 id="overview">Overview</h2>
+<p>Grub Crawler exposes a REST API for web crawling, markdown extraction, autonomous agent tasks, and distributed mesh coordination. Every endpoint returns JSON.</p>
+
+<div class="tip"><strong>Rust Engine:</strong> Markdown conversion uses a native Rust extension (<code class="inline-code">grub_md</code>) compiled via PyO3. Sub-millisecond conversion on most pages, with Python fallback if the extension isn't installed.</div>
+
+<h3 id="authentication">Authentication</h3>
+<p>When <code class="inline-code">DISABLE_AUTH=true</code> (default in Docker), all endpoints are open. Pass <code class="inline-code">customer_id</code> in the request body to partition storage.</p>
+<p>When auth is enabled, include a Bearer token:</p>
+<pre>curl -H "Authorization: Bearer &lt;token&gt;" http://localhost:6792/api/crawl</pre>
+
+<h3 id="base-url">Base URL</h3>
+<pre>http://localhost:6792</pre>
+<p>All paths below are relative to this base. In production, use your deployed URL.</p>
+
+<!-- ─── CORE CRAWLING ────────────────────────────────────── -->
+
+<h2 id="crawl">POST /api/crawl</h2>
+<p>Crawl a single URL. Returns rendered HTML, clean markdown, content quality analysis, block detection, and optional screenshots. This is the primary endpoint for most use cases.</p>
+
+<h3>Request</h3>
+<pre>{
+  "url": "https://example.com",
+  "customer_id": "my-app",
+  "session_id": "optional-group-id",
+  "options": {
+    "javascript": true,
+    "screenshot": false,
+    "timeout": 30,
+    "wait_until": "domcontentloaded",
+    "wait_for_selector": null,
+    "wait_after_load_ms": 1000,
+    "proxy": {
+      "server": "http://proxy:10001",
+      "username": "user",
+      "password": "pass"
+    },
+    "javascript_payload": "window.scrollBy(0, 1000);",
+    "dedupe_tables": true,
+    "include_html": false
+  }
+}</pre>
+
+<h3>Options</h3>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  <tr><td>javascript</td><td>bool</td><td>Enable JS rendering. <span class="default">Default: true</span></td></tr>
+  <tr><td>screenshot</td><td>bool</td><td>Capture full-page screenshot. Long pages are split into segments. <span class="default">Default: false</span></td></tr>
+  <tr><td>timeout</td><td>int</td><td>Page load timeout in seconds. <span class="default">Default: 30, Range: 5-300</span></td></tr>
+  <tr><td>wait_until</td><td>string</td><td><code class="inline-code">domcontentloaded</code> | <code class="inline-code">networkidle</code> | <code class="inline-code">selector</code>. <span class="default">Default: domcontentloaded</span></td></tr>
+  <tr><td>wait_for_selector</td><td>string?</td><td>CSS selector to wait for (requires <code class="inline-code">wait_until: "selector"</code>)</td></tr>
+  <tr><td>wait_after_load_ms</td><td>int</td><td>Extra wait after load event. <span class="default">Default: 1000, Range: 0-60000</span></td></tr>
+  <tr><td>proxy</td><td>object?</td><td>Per-request proxy override. Falls back to env-based proxy if not set.</td></tr>
+  <tr><td>javascript_payload</td><td>string?</td><td>Custom JS to execute before content capture (scrolling, clicking, etc.)</td></tr>
+  <tr><td>dedupe_tables</td><td>bool</td><td>Detect and flatten layout tables in markdown. <span class="default">Default: true</span></td></tr>
+</table>
+
+<h3>Example</h3>
+<pre>curl -s -X POST http://localhost:6792/api/crawl \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://news.ycombinator.com",
+    "customer_id": "demo"
+  }' | jq '{success, status_code, body_word_count, content_quality}'</pre>
+<pre>{
+  "success": true,
+  "status_code": 200,
+  "body_word_count": 1342,
+  "content_quality": "sufficient"
+}</pre>
+
+<h3>Response Fields</h3>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  <tr><td>success</td><td>bool</td><td>Whether the crawl completed without errors</td></tr>
+  <tr><td>url</td><td>string</td><td>Original requested URL</td></tr>
+  <tr><td>final_url</td><td>string</td><td>URL after redirects</td></tr>
+  <tr><td>status_code</td><td>int</td><td>HTTP status from the target</td></tr>
+  <tr><td>markdown</td><td>string</td><td>Clean markdown with links preserved</td></tr>
+  <tr><td>markdown_plain</td><td>string</td><td>Markdown with links stripped (for embedding)</td></tr>
+  <tr><td>html</td><td>string?</td><td>Raw HTML (only if <code class="inline-code">include_html: true</code>)</td></tr>
+  <tr><td>blocked</td><td>bool</td><td>Whether anti-bot blocking was detected</td></tr>
+  <tr><td>block_reason</td><td>string?</td><td>Cloudflare, CAPTCHA, access denied, etc.</td></tr>
+  <tr><td>content_quality</td><td>string</td><td><code class="inline-code">sufficient</code> | <code class="inline-code">minimal</code> | <code class="inline-code">empty</code> | <code class="inline-code">blocked</code></td></tr>
+  <tr><td>quarantined</td><td>bool</td><td>True if hidden prompt injection was detected (content blanked)</td></tr>
+  <tr><td>timings_ms</td><td>object</td><td>Phase breakdown: <code class="inline-code">navigation_ms</code>, <code class="inline-code">content_ms</code>, <code class="inline-code">visible_text_ms</code>, <code class="inline-code">markdown_ms</code>, <code class="inline-code">total_ms</code></td></tr>
+  <tr><td>screenshot_url</td><td>string|list</td><td>Screenshot path(s) if requested. List for multi-segment long pages.</td></tr>
+</table>
+
+<!-- ─── MARKDOWN ──────────────────────────────────────────── -->
+
+<h2 id="markdown">POST /api/markdown</h2>
+<p>Markdown-only extraction. Supports single URL or up to 50 URLs in one request. Optimized for RAG pipelines and content indexing.</p>
+
+<h3>Single URL</h3>
+<pre>curl -s -X POST http://localhost:6792/api/markdown \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com", "customer_id": "demo"}'</pre>
+
+<h3>Multiple URLs</h3>
+<pre>curl -s -X POST http://localhost:6792/api/markdown \
+  -H "Content-Type: application/json" \
+  -d '{
+    "urls": [
+      "https://example.com",
+      "https://httpbin.org/html",
+      "https://quotes.toscrape.com"
+    ],
+    "customer_id": "demo"
+  }'</pre>
+
+<p>Multi-URL requests return an array of results, one per URL, in the same order as the input.</p>
+
+<!-- ─── BATCH ─────────────────────────────────────────────── -->
+
+<h2 id="batch">POST /api/batch</h2>
+<p>Batch crawl with bounded concurrency. Crawls up to 50 URLs in parallel with configurable concurrency. Returns all results inline.</p>
+
+<h3>Request</h3>
+<pre>curl -s -X POST http://localhost:6792/api/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "urls": [
+      "https://quotes.toscrape.com/page/1/",
+      "https://quotes.toscrape.com/page/2/",
+      "https://quotes.toscrape.com/page/3/"
+    ],
+    "concurrent": 3,
+    "customer_id": "demo"
+  }'</pre>
+
+<table>
+  <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  <tr><td>urls<span class="required">*</span></td><td>string[]</td><td>URLs to crawl. <span class="default">Max: 50</span></td></tr>
+  <tr><td>concurrent</td><td>int</td><td>Parallel crawl limit. <span class="default">Default: 3, Range: 1-10</span></td></tr>
+  <tr><td>options</td><td>object</td><td>Same CrawlOptions as /api/crawl</td></tr>
+</table>
+
+<h3>Response</h3>
+<pre>{
+  "success": true,
+  "job_id": "batch-abc123",
+  "total_urls": 3,
+  "results": [ ... ],
+  "summary": {
+    "succeeded": 3,
+    "failed": 0,
+    "total_time_ms": 1940
+  }
+}</pre>
+
+<!-- ─── RAW ───────────────────────────────────────────────── -->
+
+<h2 id="raw">POST /api/raw</h2>
+<p>Raw HTML extraction with no markdown conversion. Use when you need the full DOM and want to handle parsing yourself.</p>
+
+<pre>curl -s -X POST http://localhost:6792/api/raw \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com", "customer_id": "demo"}'</pre>
+
+<p>Returns <code class="inline-code">html</code> (full rendered DOM) and basic metadata. No markdown, no content analysis.</p>
+
+<!-- ─── VIEW ──────────────────────────────────────────────── -->
+
+<h2 id="view">GET /view</h2>
+<p>Browser-rendered HTML viewer. Opens a URL through the crawler and returns the rendered page as HTML. Useful for debugging what the crawler actually sees.</p>
+
+<pre>curl "http://localhost:6792/view?url=https://example.com"
+
+# Or open in a browser:
+# http://localhost:6792/view?url=https://example.com</pre>
+
+<table>
+  <tr><th>Param</th><th>Type</th><th>Description</th></tr>
+  <tr><td>url<span class="required">*</span></td><td>string</td><td>URL to render</td></tr>
+  <tr><td>javascript</td><td>bool</td><td>Enable JS. <span class="default">Default: true</span></td></tr>
+  <tr><td>timeout</td><td>int</td><td>Timeout in seconds. <span class="default">Default: 30</span></td></tr>
+</table>
+
+<!-- ─── DOWNLOAD ──────────────────────────────────────────── -->
+
+<h2 id="download">GET /download</h2>
+<p>Download files (PDFs, images, etc.) through the crawler's browser context. Useful when the target requires JavaScript or cookies to serve the file.</p>
+
+<pre>curl -O "http://localhost:6792/download?url=https://example.com/report.pdf"</pre>
+
+<!-- ─── AGENT ─────────────────────────────────────────────── -->
+
+<h2 id="agent-run">POST /api/agent/run</h2>
+<p>Submit a task to the autonomous agent loop. The agent plans, executes tools (crawl, click, extract), observes results, and iterates until the task is complete or a stop condition is hit.</p>
+
+<div class="warn"><strong>Requires:</strong> <code class="inline-code">AGENT_ENABLED=true</code> and at least one LLM provider configured (OpenAI, Anthropic, or Ollama).</div>
+
+<h3>Request</h3>
+<pre>curl -s -X POST http://localhost:6792/api/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task": "Find the pricing page on example.com and extract plan details",
+    "max_steps": 10,
+    "max_wall_time_ms": 90000,
+    "allowed_domains": ["example.com"],
+    "customer_id": "demo"
+  }'</pre>
+
+<table>
+  <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  <tr><td>task<span class="required">*</span></td><td>string</td><td>Natural language task description. <span class="default">Max: 4000 chars</span></td></tr>
+  <tr><td>max_steps</td><td>int</td><td>Maximum agent iterations. <span class="default">Default: 12, Range: 1-50</span></td></tr>
+  <tr><td>max_wall_time_ms</td><td>int</td><td>Wall clock timeout. <span class="default">Default: 90000, Range: 5000-300000</span></td></tr>
+  <tr><td>allowed_domains</td><td>string[]?</td><td>Domain allowlist. Agent can only crawl these domains.</td></tr>
+  <tr><td>allowed_tools</td><td>string[]?</td><td>Tool allowlist. Restrict which tools the agent can use.</td></tr>
+</table>
+
+<h3>Response</h3>
+<pre>{
+  "success": true,
+  "run_id": "run-abc123",
+  "stop_reason": "completed",
+  "response": "Found 3 pricing tiers: Basic ($9/mo), Pro ($29/mo), Enterprise (custom).",
+  "steps": 4,
+  "wall_time_ms": 12340,
+  "trace": [
+    {"event": "step_start", "step_id": 1, "tool_name": "crawl_url", "status": "ok"},
+    {"event": "step_start", "step_id": 2, "tool_name": "crawl_url", "status": "ok"}
+  ]
+}</pre>
+
+<p>Stop reasons: <code class="inline-code">completed</code> (agent responded), <code class="inline-code">max_steps</code>, <code class="inline-code">max_wall_time</code>, <code class="inline-code">max_failures</code>, <code class="inline-code">no_op_loop</code>, <code class="inline-code">policy_denied</code>.</p>
+
+<!-- ─── AGENT STATUS ──────────────────────────────────────── -->
+
+<h2 id="agent-status">GET /api/agent/status/{run_id}</h2>
+<p>Check the status of an agent run or load its full trace.</p>
+
+<pre>curl http://localhost:6792/api/agent/status/run-abc123</pre>
+
+<!-- ─── GHOST ─────────────────────────────────────────────── -->
+
+<h2 id="ghost">POST /api/agent/ghost</h2>
+<p>Ghost Protocol: screenshot a page and extract content via vision AI. Bypasses DOM-based anti-bot detection entirely by reading rendered pixels instead of parsing HTML.</p>
+
+<div class="tip"><strong>When to use:</strong> When standard crawling returns <code class="inline-code">blocked: true</code> or <code class="inline-code">content_quality: "empty"</code>. Ghost Protocol captures what a human would see and extracts it via Claude, GPT-4o, or Ollama vision models.</div>
+
+<h3>Request</h3>
+<pre>curl -s -X POST http://localhost:6792/api/agent/ghost \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://heavily-protected-site.com",
+    "timeout": 30,
+    "prompt": "Extract the main article content"
+  }'</pre>
+
+<h3>Response</h3>
+<pre>{
+  "success": true,
+  "url": "https://heavily-protected-site.com",
+  "content": "# Article Title\n\nExtracted content from the screenshot...",
+  "render_mode": "ghost",
+  "capture_ms": 2340,
+  "extraction_ms": 4560,
+  "total_ms": 6900,
+  "provider": "anthropic"
+}</pre>
+
+<!-- ─── CACHE ─────────────────────────────────────────────── -->
+
+<h2 id="cache-search">POST /api/cache/search</h2>
+<p>Fuzzy search across cached crawl results. Uses TF-IDF similarity matching against stored markdown content.</p>
+
+<pre>curl -s -X POST http://localhost:6792/api/cache/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "web crawling best practices",
+    "domain": "example.com",
+    "min_similarity": 0.4,
+    "max_results": 10
+  }'</pre>
+
+<h2 id="cache-list">GET /api/cache/list</h2>
+<p>List cached document metadata. Filter by domain or quality.</p>
+
+<pre>curl "http://localhost:6792/api/cache/list?domain=example.com&limit=20"</pre>
+
+<h2 id="cache-upsert">POST /api/cache/upsert</h2>
+<p>Insert or update a cache entry. Useful for pre-populating the cache or storing externally crawled content.</p>
+
+<pre>curl -s -X POST http://localhost:6792/api/cache/upsert \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/page",
+    "markdown": "# Page Title\n\nContent here...",
+    "quality": "sufficient"
+  }'</pre>
+
+<!-- ─── LIVE STREAM ───────────────────────────────────────── -->
+
+<h2 id="stream-ws">WS /stream/{session_id}</h2>
+<p>WebSocket viewport stream. Connect to a live browser session, navigate pages, and receive real-time screenshot frames.</p>
+
+<div class="warn"><strong>Requires:</strong> <code class="inline-code">BROWSER_STREAM_ENABLED=true</code> and <code class="inline-code">BROWSER_POOL_SIZE >= 1</code>.</div>
+
+<h3>Connect</h3>
+<pre>const ws = new WebSocket("ws://localhost:6792/stream/my-session?url=https://example.com");
+
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+  if (msg.type === "frame") {
+    document.getElementById("viewport").src =
+      "data:image/jpeg;base64," + msg.data;
+  }
+};</pre>
+
+<h3>Interactive Commands</h3>
+<pre>// Navigate to a new URL
+ws.send(JSON.stringify({ action: "navigate", url: "https://example.com/pricing" }));
+
+// Click an element
+ws.send(JSON.stringify({ action: "click", selector: "#signup-btn" }));
+
+// Scroll the page
+ws.send(JSON.stringify({ action: "scroll", direction: "down" }));
+
+// Type into an input
+ws.send(JSON.stringify({ action: "type", selector: "#search", text: "hello" }));</pre>
+
+<h2 id="stream-mjpeg">GET /stream/{session_id}/mjpeg</h2>
+<p>MJPEG fallback stream. Drop it in an <code class="inline-code">&lt;img&gt;</code> tag for instant video without WebSocket.</p>
+
+<pre>&lt;img src="http://localhost:6792/stream/my-session/mjpeg?url=https://example.com" /&gt;</pre>
+
+<!-- ─── MESH ──────────────────────────────────────────────── -->
+
+<h2 id="mesh-peers">GET /mesh/peers</h2>
+<p>List known mesh peers with health status and load metrics.</p>
+
+<pre>curl http://localhost:6792/mesh/peers</pre>
+<pre>[
+  {
+    "name": "cloud-node",
+    "url": "https://grub-cloud.example.com",
+    "healthy": true,
+    "load": { "active_crawls": 2, "cpu_percent": 45 },
+    "last_heartbeat": "2026-02-27T20:30:00Z"
+  }
+]</pre>
+
+<h2 id="mesh-status">GET /mesh/status</h2>
+<p>This node's mesh status, peer count, and current load.</p>
+
+<pre>curl http://localhost:6792/mesh/status</pre>
+
+<h2 id="mesh-execute">POST /mesh/execute</h2>
+<p>Execute a tool on a remote mesh node. The mesh dispatcher routes to the best node based on load, locality, and affinity scoring. 1-hop max (A to B only, never A to B to C).</p>
+
+<pre>curl -s -X POST http://localhost:6792/mesh/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tool_name": "crawl_url",
+    "args": {"url": "https://example.com"},
+    "target_node": "cloud-node"
+  }'</pre>
+
+<!-- ─── SYSTEM ────────────────────────────────────────────── -->
+
+<h2 id="health">GET /health</h2>
+<p>Health check. Returns service status, version, registered tool count, and mesh info.</p>
+
+<pre>curl http://localhost:6792/health</pre>
+<pre>{
+  "status": "healthy",
+  "service": "grub-crawl",
+  "version": "1.0.0",
+  "cloud_mode": false,
+  "tools_registered": 5
+}</pre>
+
+<h2 id="tools">GET /tools</h2>
+<p>List all registered AHP tools available for agent and mesh execution.</p>
+
+<pre>curl http://localhost:6792/tools</pre>
+
+<!-- ─── GUIDES ────────────────────────────────────────────── -->
+
+<h2 id="anti-detection">Guide: Anti-Detection Stack</h2>
+<p>Three layers that stack together. Configure via environment variables or per-request.</p>
+
+<h3>Layer 1: Camoufox Engine</h3>
+<p>Anti-detect browser with C++-level fingerprint spoofing. Generates realistic fingerprints per context (canvas, WebGL, fonts, navigator properties). No manual user-agent tricks needed.</p>
+<pre># docker-compose.yml or .env
+BROWSER_ENGINE=camoufox</pre>
+
+<h3>Layer 2: Stealth Patches</h3>
+<p>For Chromium engine: applies playwright-stealth patches (navigator.webdriver, window.chrome, permissions). Skipped automatically when using Camoufox (built-in).</p>
+<pre>STEALTH_ENABLED=true</pre>
+
+<h3>Layer 3: Tracker Blocking</h3>
+<p>Blocks 20+ tracking/analytics domains (Google Analytics, DataDome, PerimeterX, Kasada, etc.) to reduce fingerprint surface and avoid triggering anti-bot scripts.</p>
+<pre>BLOCK_TRACKING_DOMAINS=true</pre>
+
+<h3>Layer 4: Per-Request Proxy</h3>
+<p>Route traffic through residential or datacenter proxies. Set globally via env or override per-request.</p>
+<pre># Global default
+PROXY_SERVER=http://proxy.example.com:10001
+PROXY_USERNAME=user
+PROXY_PASSWORD=pass
+
+# Per-request override in any crawl endpoint:
+"options": {
+  "proxy": {
+    "server": "http://residential-proxy:10001",
+    "username": "user",
+    "password": "pass"
+  }
+}</pre>
+
+<h3>Layer 5: Ghost Protocol (Fallback)</h3>
+<p>When prevention fails (Cloudflare challenge, CAPTCHA, empty SPA shell), Ghost Protocol takes a screenshot and extracts content via vision AI. Automatic when <code class="inline-code">AGENT_GHOST_AUTO_TRIGGER=true</code>.</p>
+
+<!-- ─── GOOGLE SEARCH GUIDE ───────────────────────────────── -->
+
+<h2 id="google-search">Guide: Crawling Google Search</h2>
+<p>Grub can crawl Google SERPs with the anti-detection stack enabled. Camoufox is required — standard headless Chromium gets blocked immediately.</p>
+
+<h3>Configuration</h3>
+<pre># Required in docker-compose.yml or .env
+BROWSER_ENGINE=camoufox
+STEALTH_ENABLED=true
+BLOCK_TRACKING_DOMAINS=true</pre>
+
+<h3>Request</h3>
+<pre>curl -s -X POST http://localhost:6792/api/crawl \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://www.google.com/search?q=web+crawling+tools",
+    "customer_id": "search-client",
+    "options": {
+      "javascript": true,
+      "wait_until": "networkidle",
+      "wait_for_selector": ".g",
+      "wait_after_load_ms": 2000,
+      "timeout": 40,
+      "screenshot": true
+    }
+  }'</pre>
+
+<div class="tip"><strong>Key settings:</strong> <code class="inline-code">wait_until: "networkidle"</code> lets all AJAX finish. <code class="inline-code">wait_for_selector: ".g"</code> waits for search result containers. <code class="inline-code">wait_after_load_ms: 2000</code> handles late-loading elements.</div>
+
+<p>For repeated searches, add a residential proxy to avoid IP-based rate limiting.</p>
+
+<!-- ─── CONTENT QUALITY GUIDE ─────────────────────────────── -->
+
+<h2 id="content-quality">Guide: Content Quality</h2>
+<p>Every crawl response includes a <code class="inline-code">content_quality</code> field that classifies the extracted content:</p>
+
+<table>
+  <tr><th>Quality</th><th>Criteria</th><th>Action</th></tr>
+  <tr><td>sufficient</td><td>&ge; 600 chars AND &ge; 120 words</td><td>Safe for summarization and RAG indexing</td></tr>
+  <tr><td>minimal</td><td>&lt; 600 chars OR &lt; 120 words</td><td>Thin content. Consider retry or Ghost Protocol.</td></tr>
+  <tr><td>empty</td><td>&lt; 80 chars OR &lt; 15 words</td><td>Page probably didn't render. Retry with JS or check block status.</td></tr>
+  <tr><td>blocked</td><td>Anti-bot signal detected</td><td>Use Ghost Protocol or add proxy/stealth.</td></tr>
+</table>
+
+<h3>Prompt Injection Defense</h3>
+<p>When <code class="inline-code">quarantined: true</code>, the extractor detected hidden instruction-like text (common in <code class="inline-code">.sr-only</code> / <code class="inline-code">visually-hidden</code> abuse). Content is blanked (fail-closed) and <code class="inline-code">policy_flags</code> includes <code class="inline-code">hidden_text_suspected</code>.</p>
+
+<div class="warn"><strong>Do not summarize</strong> quarantined content. The hidden text may contain prompt injection payloads targeting downstream LLMs.</div>
+
+</div><!-- /main -->
+</div><!-- /layout -->
+</body>
+</html>
