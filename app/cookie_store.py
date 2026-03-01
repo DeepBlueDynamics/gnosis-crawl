@@ -28,6 +28,10 @@ class StoredCookie:
 class CookieStore:
     def __init__(self):
         self._store: Dict[str, List[StoredCookie]] = {}
+        # CapSolver UA cache: domain -> (user_agent, stored_at)
+        # cf_clearance is bound to the UA that CapSolver used to solve the challenge.
+        # Subsequent contexts for the same domain MUST use this UA.
+        self._capsolver_ua: Dict[str, tuple[str, float]] = {}
 
     def _key(self, domain: str, proxy_server: Optional[str] = None) -> str:
         return f"{domain}|{proxy_server or 'direct'}"
@@ -68,11 +72,37 @@ class CookieStore:
         await context.add_cookies(playwright_cookies)
         return len(valid)
 
+    def save_capsolver_ua(self, domain: str, user_agent: str):
+        """Cache the user agent CapSolver used to solve a challenge for this domain.
+
+        cf_clearance cookies are bound to the UA that solved the challenge.
+        Subsequent contexts for the same domain should use this UA to reuse the cookie.
+        """
+        self._capsolver_ua[domain] = (user_agent, time.time())
+        logger.info(f"Cached CapSolver UA for {domain}: {user_agent[:60]}...")
+
+    def get_capsolver_ua(self, domain: str, max_age_seconds: float = 1500) -> Optional[str]:
+        """Get the cached CapSolver UA for a domain, if still fresh."""
+        entry = self._capsolver_ua.get(domain)
+        if not entry:
+            return None
+        ua, stored_at = entry
+        if (time.time() - stored_at) > max_age_seconds:
+            del self._capsolver_ua[domain]
+            return None
+        return ua
+
     def clear_expired(self):
         for key in list(self._store):
             self._store[key] = [c for c in self._store[key] if not c.is_expired]
             if not self._store[key]:
                 del self._store[key]
+        # Also clear expired CapSolver UAs
+        now = time.time()
+        for domain in list(self._capsolver_ua):
+            _, stored_at = self._capsolver_ua[domain]
+            if (now - stored_at) > 1500:
+                del self._capsolver_ua[domain]
 
 
 _global_store: Optional[CookieStore] = None

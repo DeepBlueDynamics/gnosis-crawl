@@ -174,7 +174,13 @@ class CrawlerEngine:
             parsed_url = urlparse(url)
             if not parsed_url.scheme or not parsed_url.netloc:
                 raise ValueError(f"Invalid URL: {url}")
-            
+
+            # Auto-derive domain for cookie store / CapSolver UA caching
+            if not domain:
+                domain = parsed_url.netloc.lower()
+                if domain.startswith("www."):
+                    domain = domain[4:]
+
             # Get browser engine and crawl with isolated context
             browser = await get_browser_engine()
 
@@ -357,6 +363,11 @@ class CrawlerEngine:
         # markdown, block phrases are from boilerplate scripts/headers, not a challenge.
         has_substantial_content = html_len > 5000 or markdown_len > 2000
 
+        # Cloudflare challenge: lots of HTML (JS scripts) but almost no markdown.
+        # Challenge pages inject ~8K bytes of JS, triggering has_substantial_content,
+        # but produce <100 chars of actual markdown content.
+        html_heavy_no_markdown = html_len > 3000 and markdown_len < 100
+
         patterns = [
             ("cloudflare", "cloudflare_challenge"),
             ("verify your session", "session_verification"),
@@ -372,7 +383,8 @@ class CrawlerEngine:
                 # Don't flag as blocked when we have substantial content — real challenge
                 # pages are small (<5K HTML). If we have 10K+ chars, the block phrase is
                 # likely from boilerplate scripts/headers, not an actual challenge.
-                if has_substantial_content:
+                # Exception: large HTML with tiny markdown = challenge page with JS bloat.
+                if has_substantial_content and not html_heavy_no_markdown:
                     logger.debug(
                         f"Block phrase '{phrase}' found but page has substantial content "
                         f"(html={html_len}, md={markdown_len}), not flagging as blocked"
@@ -404,6 +416,10 @@ class CrawlerEngine:
         if blocked:
             return "blocked"
 
+        # Catch Cloudflare challenge pages served with HTTP 403/503 + thin body
+        if status_code in (403, 503) and body_char_count < 200:
+            return "blocked"
+
         # HTTP errors should never be "sufficient" for downstream summarization,
         # UNLESS we have substantial content (soft-block: page served despite status code).
         if status_code is not None:
@@ -432,6 +448,18 @@ class CrawlerEngine:
         ]
         if any(sig in normalized for sig in error_page_signatures):
             return "minimal"
+
+        # Cloudflare challenge pages served as HTTP 200
+        cf_challenge_signatures = [
+            "just a moment",
+            "performance & security by cloudflare",
+            "ray id:",
+            "cf-browser-verification",
+            "enable javascript and cookies to continue",
+        ]
+        cf_matches = sum(1 for sig in cf_challenge_signatures if sig in normalized)
+        if cf_matches >= 2 and body_char_count < 500:
+            return "blocked"
 
         # Thin pages should not be treated as sufficient; this catches quiz/header-only pages.
         if body_char_count < 80 or body_word_count < 15:
