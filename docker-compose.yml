@@ -21,14 +21,14 @@ services:
       - AGENT_GHOST_ENABLED=true
       - AGENT_GHOST_AUTO_TRIGGER=true
       - AGENT_GHOST_VISION_PROVIDER=anthropic
-      - BROWSER_ENGINE=chromium
+      - BROWSER_ENGINE=camoufox
       - STEALTH_ENABLED=true
       - BLOCK_TRACKING_DOMAINS=true
-      # Proxy (uncomment and configure)
-      # - PROXY_SERVER=http://proxy.example.com:10001
-      # - PROXY_USERNAME=${PROXY_USERNAME}
-      # - PROXY_PASSWORD=${PROXY_PASSWORD}
-      # - PROXY_BYPASS=localhost,127.0.0.1
+      # Residential proxy — required for Cloudflare-protected sites
+      - PROXY_SERVER=${PROXY_SERVER}
+      - PROXY_USERNAME=${PROXY_USERNAME}
+      - PROXY_PASSWORD=${PROXY_PASSWORD}
+      - PROXY_BYPASS=localhost,127.0.0.1
       # Mesh (uncomment to enable — see docker-compose.mesh.yml for 2-node setup)
       # - MESH_ENABLED=true
       # - MESH_NODE_NAME=local
