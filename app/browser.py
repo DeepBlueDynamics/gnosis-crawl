@@ -260,6 +260,12 @@ class BrowserEngine:
         # Hitting the same domain from multiple proxy IPs simultaneously
         # is an anti-bot red flag and triggers Cloudflare rate limiting.
         self._domain_locks: Dict[str, asyncio.Lock] = {}
+        # Consecutive failure tracking for proxy burnout detection.
+        # After N consecutive timeouts, restart browser with a fresh proxy session.
+        self._consecutive_failures = 0
+        self._max_failures_before_restart = settings.proxy_restart_after_failures
+        # Store the proxy config for CapSolver AntiCloudflareTask (needs proxy details).
+        self._proxy_config: Optional[dict] = None
         
     async def start_browser(self, javascript_enabled: bool = True) -> None:
         """Start browser with enhanced configuration and anti-detection."""
@@ -279,9 +285,10 @@ class BrowserEngine:
                     import uuid as _uuid
 
                     session_id = _uuid.uuid4().hex[:12]
-                    proxy = settings.get_sticky_proxy_config(session_id=session_id, duration_minutes=30)
+                    proxy = settings.get_sticky_proxy_config(session_id=session_id)
                     if proxy:
-                        logger.info(f"Camoufox proxy session: {session_id} (30 min sticky)")
+                        logger.info(f"Camoufox proxy session: {session_id} ({settings.proxy_session_duration_minutes} min sticky)")
+                        self._proxy_config = proxy
                     else:
                         logger.info("No proxy configured for Camoufox")
                     headless_mode = "virtual" if settings.browser_headless else False
@@ -297,6 +304,7 @@ class BrowserEngine:
                     self.page = await self.context.new_page()
 
                     logger.info("Camoufox browser started successfully")
+                    await self._check_exit_ip()
                 else:
                     if _HAS_PATCHRIGHT:
                         logger.info("Starting Patchright (CDP-patched) browser")
@@ -347,7 +355,8 @@ class BrowserEngine:
                     await self._set_realistic_headers()
 
                     logger.info("Browser started successfully")
-                
+                    await self._check_exit_ip()
+
             except Exception as e:
                 logger.error(f"Failed to start browser: {e}", exc_info=True)
                 await self.close()
@@ -366,7 +375,20 @@ class BrowserEngine:
             # Do NOT set proxy per-context — the browser-level proxy already
             # routes all traffic.  Setting it again causes 407 auth races when
             # multiple contexts start simultaneously.
-            context = await self.browser.new_context()
+            ctx_kwargs = {}
+
+            # If we have a cached CapSolver UA for this domain, use it.
+            # cf_clearance cookies are bound to the UA that CapSolver used to
+            # solve the challenge.  Reusing the same UA lets us skip CapSolver
+            # on subsequent crawls to the same domain.
+            if domain:
+                from app.cookie_store import get_cookie_store
+                cached_ua = get_cookie_store().get_capsolver_ua(domain)
+                if cached_ua:
+                    ctx_kwargs["user_agent"] = cached_ua
+                    logger.info(f"Using cached CapSolver UA for {domain}")
+
+            context = await self.browser.new_context(**ctx_kwargs)
             page = await context.new_page()
             # Stealth + request interception are built-in at C++ level
             await setup_request_interception(context)
@@ -438,7 +460,11 @@ class BrowserEngine:
         proxy=None,
         client_timeout_seconds: Optional[int] = None,
         domain: str = None,
-        proxy_server: str = None
+        proxy_server: str = None,
+        challenge_wait_ms: int = None,
+        simulate_human: bool = False,
+        scroll_count: int = 3,
+        platform: str = None,
     ) -> tuple[str, dict, bytes]:
         """Crawl URL using an isolated context for concurrent operations.
 
@@ -469,6 +495,7 @@ class BrowserEngine:
                     context, page = await self.create_isolated_context(javascript_enabled, proxy=proxy, domain=domain, proxy_server=proxy_server)
 
                 try:
+                    original_context = context  # Track for cleanup if CapSolver swaps context
                     max_retries = 2
                     for attempt in range(max_retries):
                         # Check if client has likely given up (5s safety margin)
@@ -496,20 +523,49 @@ class BrowserEngine:
 
                             # Challenge detection + resolution (integrated from challenge_solver)
                             challenge_result = None
+                            _challenge_wait = challenge_wait_ms or settings.challenge_auto_wait_ms
                             try:
                                 from app.challenge_solver import resolve_challenge
-                                challenge_result = await resolve_challenge(page, site_url=url)
+                                challenge_result = await resolve_challenge(
+                                    page, site_url=url,
+                                    auto_wait_ms=_challenge_wait,
+                                    capsolver_timeout_ms=min(settings.challenge_capsolver_timeout_ms, _challenge_wait),
+                                    proxy_config=self._proxy_config,
+                                )
                                 if challenge_result.resolved and challenge_result.method != "none":
                                     logger.info(f"Challenge resolved via {challenge_result.method} in {challenge_result.wait_time_ms}ms")
-                                    try:
-                                        await page.wait_for_load_state("domcontentloaded", timeout=10000)
-                                    except Exception:
-                                        await asyncio.sleep(3)
+                                    # If CapSolver returned a new page with matched UA, use it
+                                    if hasattr(challenge_result, '_new_page') and challenge_result._new_page:
+                                        logger.info("Switching to CapSolver UA-matched page")
+                                        try:
+                                            if not page.is_closed():
+                                                await page.close()
+                                        except Exception:
+                                            pass
+                                        page = challenge_result._new_page
+                                        context = challenge_result._new_context
+                                    else:
+                                        try:
+                                            await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                                        except Exception:
+                                            await asyncio.sleep(3)
                                     wait_ms += challenge_result.wait_time_ms
                             except Exception as e:
                                 logger.debug(f"Challenge resolution skipped: {e}")
 
                             logger.info(f"Successfully navigated to {url}")
+                            self._consecutive_failures = 0
+
+                            # Human behavior simulation before content extraction
+                            if simulate_human:
+                                try:
+                                    from app.human_behavior import human_scroll, simulate_mouse_movement
+                                    from app.behavior_profile import BehaviorProfile
+                                    profile = BehaviorProfile.random()
+                                    await simulate_mouse_movement(page, profile=profile)
+                                    await human_scroll(page, scroll_count=scroll_count, platform=platform, profile=profile)
+                                except Exception as hb_err:
+                                    logger.debug(f"Human behavior simulation failed (non-fatal): {hb_err}")
 
                             # Save cookies after successful navigation
                             if domain:
@@ -612,10 +668,45 @@ class BrowserEngine:
                                     logger.warning(f"Failed to take screenshot: {e}")
                                     screenshot_data = None
 
+                            # Track proxy health on success
+                            try:
+                                from app.proxy_pool import get_proxy_pool
+                                from urllib.parse import urlparse as _urlparse
+                                _pool = get_proxy_pool()
+                                _domain = _urlparse(url).netloc.lower()
+                                if _domain.startswith("www."):
+                                    _domain = _domain[4:]
+                                _pool.mark_success(_domain)
+                            except Exception:
+                                pass
+
                             return content, page_info, screenshot_data
 
                         except Exception as e:
                             is_timeout = "Timeout" in type(e).__name__ or "timeout" in str(e).lower()
+                            is_proxy_error = "NS_ERROR_PROXY" in str(e)
+
+                            # Proxy errors (BAD_GATEWAY, CONNECTION_REFUSED) mean the
+                            # proxy session is dead.  Restart immediately — no point
+                            # retrying with the same burned proxy.
+                            if is_proxy_error:
+                                logger.warning(f"Proxy error detected: {e}")
+                                self._consecutive_failures += 1
+
+                                # Track proxy health on failure
+                                try:
+                                    from app.proxy_pool import get_proxy_pool
+                                    from urllib.parse import urlparse as _urlparse
+                                    _pool = get_proxy_pool()
+                                    _domain = _urlparse(url).netloc.lower()
+                                    if _domain.startswith("www."):
+                                        _domain = _domain[4:]
+                                    _pool.mark_failed(_domain)
+                                except Exception:
+                                    pass
+
+                                await self._restart_with_fresh_proxy()
+                                raise  # Let caller know — context is stale, cannot retry here
 
                             # On navigation timeout, the page may have loaded a Cloudflare challenge.
                             # Try to detect + solve it before giving up.
@@ -623,7 +714,12 @@ class BrowserEngine:
                                 logger.info(f"Navigation timed out on attempt {attempt + 1}, checking for Cloudflare challenge on partial page")
                                 try:
                                     from app.challenge_solver import resolve_challenge
-                                    challenge_result = await resolve_challenge(page, site_url=url)
+                                    _challenge_wait = challenge_wait_ms or settings.challenge_auto_wait_ms
+                                    challenge_result = await resolve_challenge(
+                                        page, site_url=url,
+                                        auto_wait_ms=_challenge_wait,
+                                        proxy_config=self._proxy_config,
+                                    )
                                     if challenge_result.resolved and challenge_result.method != "none":
                                         logger.info(f"Challenge resolved after timeout via {challenge_result.method} in {challenge_result.wait_time_ms}ms — extracting content")
                                         # Challenge solved — page should now have real content. Wait for DOM to settle.
@@ -656,6 +752,14 @@ class BrowserEngine:
                                             }
                                         }
 
+                                        # Save cookies (esp. cf_clearance) after challenge resolution
+                                        if domain:
+                                            try:
+                                                from app.cookie_store import get_cookie_store
+                                                await get_cookie_store().save_from_context(context, domain, proxy_server)
+                                            except Exception:
+                                                pass
+
                                         screenshot_data = None
                                         if take_screenshot:
                                             try:
@@ -666,6 +770,24 @@ class BrowserEngine:
                                         return content, page_info, screenshot_data
                                 except Exception as challenge_err:
                                     logger.debug(f"Post-timeout challenge resolution failed: {challenge_err}")
+
+                            # Track proxy health on failure
+                            try:
+                                from app.proxy_pool import get_proxy_pool
+                                from urllib.parse import urlparse as _urlparse
+                                _pool = get_proxy_pool()
+                                _domain = _urlparse(url).netloc.lower()
+                                if _domain.startswith("www."):
+                                    _domain = _domain[4:]
+                                _pool.mark_failed(_domain)
+                            except Exception:
+                                pass
+
+                            # Track consecutive failures for proxy burnout detection
+                            if is_timeout:
+                                self._consecutive_failures += 1
+                                if self._consecutive_failures >= self._max_failures_before_restart:
+                                    await self._restart_with_fresh_proxy()
 
                             logger.warning(f"Navigation error on attempt {attempt + 1}: {e}")
                             if attempt == max_retries - 1:
@@ -680,11 +802,14 @@ class BrowserEngine:
                     raise TimeoutError(f"Navigation to {url} exhausted all retries or deadline")
 
                 finally:
-                    # Always cleanup the isolated context
-                    try:
-                        await context.close()
-                    except Exception as e:
-                        logger.warning(f"Error closing context: {e}")
+                    # Always cleanup the isolated context(s).
+                    # If CapSolver created a UA-matched context, close both
+                    # the original and the new one.
+                    for ctx in {original_context, context}:
+                        try:
+                            await ctx.close()
+                        except Exception as e:
+                            logger.warning(f"Error closing context: {e}")
 
     async def navigate(self, url: str, javascript_enabled: bool = True, timeout: int = 30000) -> None:
         """Navigate to URL with enhanced error handling and retry logic."""
@@ -852,6 +977,51 @@ class BrowserEngine:
             except Exception as e:
                 logger.error(f"Error closing browser: {e}")
     
+    async def _check_exit_ip(self):
+        """Check and log the proxy exit IP address.
+
+        Opens a disposable page, hits an IP-check service, logs the result,
+        and always closes the page — even on failure.  Non-fatal: if the
+        check fails the browser continues normally.
+        """
+        if not self.browser:
+            return
+        _ip_page = None
+        try:
+            _ctx = await self.browser.new_context()
+            _ip_page = await _ctx.new_page()
+            resp = await _ip_page.goto(
+                "https://httpbin.org/ip", timeout=10000, wait_until="domcontentloaded"
+            )
+            if resp and resp.ok:
+                body = await _ip_page.inner_text("body")
+                try:
+                    import json as _json
+                    ip_addr = _json.loads(body).get("origin", body.strip())
+                except Exception:
+                    ip_addr = body.strip().replace("\n", " ")
+                logger.info(f"Proxy exit IP: {ip_addr}")
+            else:
+                logger.warning(f"IP check returned HTTP {resp.status if resp else 'no response'}")
+        except Exception as e:
+            logger.warning(f"IP check failed (non-fatal): {e}")
+        finally:
+            try:
+                if _ip_page and not _ip_page.is_closed():
+                    await _ip_page.close()
+                if _ctx:
+                    await _ctx.close()
+            except Exception:
+                pass
+
+    async def _restart_with_fresh_proxy(self):
+        """Close browser and start fresh one with new proxy session."""
+        logger.warning("Restarting browser with fresh proxy session due to consecutive failures")
+        await self.close()
+        await self.start_browser()
+        self._consecutive_failures = 0
+        # IP check already runs inside start_browser(), no need to call again
+
     async def _wait_for_render_stability(self, javascript_enabled: bool = False) -> bool:
         """Wait for page render stability by monitoring DOM changes."""
         if not javascript_enabled:

@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     enable_screenshots: bool = False
 
     # Browser Configuration
-    browser_engine: str = "chromium"  # "chromium" or "camoufox"
+    browser_engine: str = "camoufox"  # "camoufox" or "chromium"
     browser_headless: bool = True
     browser_timeout: int = 30000
 
@@ -81,6 +81,14 @@ class Settings(BaseSettings):
     proxy_username: Optional[str] = None
     proxy_password: Optional[str] = None
     proxy_bypass: str = ""
+
+    # Challenge Resolution Configuration
+    challenge_auto_wait_ms: int = 30000       # default auto-wait for challenge resolution (30s)
+    challenge_capsolver_timeout_ms: int = 30000  # CapSolver API timeout
+
+    # Proxy Rotation Configuration
+    proxy_session_duration_minutes: int = 10  # shorter sticky sessions (was 30)
+    proxy_restart_after_failures: int = 3     # restart browser after N consecutive timeouts
 
     # Stealth Configuration
     stealth_enabled: bool = True
@@ -161,7 +169,7 @@ class Settings(BaseSettings):
             config["bypass"] = self.proxy_bypass
         return config
 
-    def get_sticky_proxy_config(self, session_id: str = None, duration_minutes: int = 30) -> Optional[dict]:
+    def get_sticky_proxy_config(self, session_id: str = None, duration_minutes: int = None) -> Optional[dict]:
         """Return proxy config with Decodo sticky session.
 
         Sticky sessions keep the same exit IP for the session duration,
@@ -177,7 +185,8 @@ class Settings(BaseSettings):
 
         if self.proxy_username:
             sid = session_id or uuid.uuid4().hex[:12]
-            config["username"] = f"user-{self.proxy_username}-country-us-session-{sid}-sessionduration-{duration_minutes}"
+            dur = duration_minutes if duration_minutes is not None else self.proxy_session_duration_minutes
+            config["username"] = f"user-{self.proxy_username}-country-us-session-{sid}-sessionduration-{dur}"
 
         if self.proxy_password:
             config["password"] = self.proxy_password

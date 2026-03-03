@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 class TestConfigBrowserEngine:
     """Config correctly exposes browser_engine setting."""
 
-    def test_default_is_chromium(self):
+    def test_default_is_camoufox(self):
         from app.config import Settings
         s = Settings(_env_file=None)
-        assert s.browser_engine == "chromium"
+        assert s.browser_engine == "camoufox"
 
     def test_camoufox_from_env(self):
         from app.config import Settings
@@ -41,7 +41,9 @@ class TestStartBrowserCamoufox:
         with patch("app.browser.settings") as mock_settings:
             mock_settings.browser_engine = "camoufox"
             mock_settings.browser_headless = True
+            mock_settings.max_concurrent_crawls = 5
             mock_settings.get_proxy_config.return_value = None
+            mock_settings.get_sticky_proxy_config.return_value = None
 
             with patch.dict(
                 "sys.modules",
@@ -77,28 +79,19 @@ class TestStartBrowserCamoufox:
         with patch("app.browser.settings") as mock_settings:
             mock_settings.browser_engine = "chromium"
             mock_settings.browser_headless = True
+            mock_settings.max_concurrent_crawls = 5
 
-        with patch("app.browser.async_playwright") as mock_pw_fn:
-            mock_pw_start = AsyncMock(return_value=mock_playwright)
-            mock_pw_fn.return_value.start = mock_pw_start
+            with patch("app.browser.async_playwright") as mock_pw_ctx:
+                mock_pw_ctx.return_value = AsyncMock()
+                mock_pw_ctx.return_value.start = AsyncMock(return_value=mock_playwright)
 
-            engine = BrowserEngine()
-            # The chromium path is the existing code — just verify it doesn't call AsyncCamoufox
-            with patch("app.browser.settings") as mock_settings:
-                mock_settings.browser_engine = "chromium"
-                mock_settings.browser_headless = True
+                engine = BrowserEngine()
+                await engine.start_browser()
 
-                with patch("app.browser.async_playwright") as mock_pw_ctx:
-                    mock_pw_ctx.return_value = AsyncMock()
-                    mock_pw_ctx.return_value.start = AsyncMock(return_value=mock_playwright)
+                mock_playwright.chromium.launch.assert_called_once()
+                assert engine.browser is mock_browser
 
-                    engine = BrowserEngine()
-                    await engine.start_browser()
-
-                    mock_playwright.chromium.launch.assert_called_once()
-                    assert engine.browser is mock_browser
-
-                    await engine.close()
+                await engine.close()
 
     async def test_start_browser_camoufox_passes_proxy(self):
         """start_browser() passes proxy config to AsyncCamoufox."""
@@ -120,7 +113,9 @@ class TestStartBrowserCamoufox:
         with patch("app.browser.settings") as mock_settings:
             mock_settings.browser_engine = "camoufox"
             mock_settings.browser_headless = True
+            mock_settings.max_concurrent_crawls = 5
             mock_settings.get_proxy_config.return_value = proxy_config
+            mock_settings.get_sticky_proxy_config.return_value = proxy_config
 
             with patch.dict(
                 "sys.modules",
@@ -213,8 +208,12 @@ class TestCreateIsolatedContextCamoufox:
                     assert "timezone_id" not in call_kwargs
                     assert "locale" not in call_kwargs
 
-    async def test_passes_proxy_to_camoufox_context(self):
-        """create_isolated_context() forwards proxy to camoufox context."""
+    async def test_skips_per_context_proxy_for_camoufox(self):
+        """create_isolated_context() does NOT pass proxy to camoufox context.
+
+        Camoufox uses browser-level proxy only.  Setting proxy per-context
+        causes 407 auth races when multiple contexts start simultaneously.
+        """
         from app.browser import BrowserEngine
 
         mock_browser = AsyncMock()
@@ -236,7 +235,7 @@ class TestCreateIsolatedContextCamoufox:
                     ctx, pg = await engine.create_isolated_context(proxy=proxy)
 
                     call_kwargs = mock_browser.new_context.call_args[1]
-                    assert call_kwargs["proxy"] == proxy
+                    assert "proxy" not in call_kwargs
 
 
 @pytest.mark.asyncio

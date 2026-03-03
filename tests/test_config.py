@@ -35,6 +35,16 @@ class TestSettings:
         assert s.agent_ghost_max_image_width == 1280
         assert s.agent_ghost_max_retries == 1
 
+    def test_challenge_resolution_defaults(self):
+        s = Settings(_env_file=None)
+        assert s.challenge_auto_wait_ms == 15000
+        assert s.challenge_capsolver_timeout_ms == 30000
+
+    def test_proxy_rotation_defaults(self):
+        s = Settings(_env_file=None)
+        assert s.proxy_session_duration_minutes == 10
+        assert s.proxy_restart_after_failures == 3
+
     def test_stream_defaults(self):
         s = Settings(_env_file=None)
         assert s.browser_pool_size == 1
@@ -137,7 +147,8 @@ class TestStickyProxyConfig:
         assert config is not None
         # Should contain a generated session ID (12-char hex)
         assert "session-" in config["username"]
-        assert "sessionduration-30" in config["username"]
+        # Default duration is now proxy_session_duration_minutes (10)
+        assert "sessionduration-10" in config["username"]
 
     def test_custom_duration(self):
         s = Settings(

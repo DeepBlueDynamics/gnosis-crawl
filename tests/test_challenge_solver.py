@@ -15,8 +15,11 @@ from app.challenge_solver import (
     detect_challenge,
     wait_for_challenge_resolution,
     solve_turnstile_capsolver,
+    solve_managed_challenge_capsolver,
     resolve_challenge,
     _extract_turnstile_sitekey,
+    _click_turnstile_checkbox,
+    _format_proxy_for_capsolver,
 )
 
 
@@ -110,7 +113,10 @@ class TestDetectChallenge:
         page = make_page(title="Just a moment...")
         result = await detect_challenge(page)
         assert result.detected is True
-        assert result.challenge_type == ChallengeType.JS_CHALLENGE
+        # Title-only match now classifies as MANAGED (not JS_CHALLENGE)
+        # because Cloudflare uses "Just a moment..." for all challenge types.
+        # MANAGED ensures CapSolver is eligible as a fallback.
+        assert result.challenge_type == ChallengeType.MANAGED
         assert result.confidence == 0.9
         assert "just a moment" in result.selector_matched
 
@@ -213,15 +219,19 @@ class TestDetectChallenge:
         assert result.detected is False
 
     @pytest.mark.asyncio
-    async def test_title_takes_priority_over_selectors(self):
-        """Title match should return immediately, not check selectors."""
+    async def test_dom_selector_takes_priority_over_title(self):
+        """DOM selector match should override the title-only classification.
+
+        When both a title pattern and a Turnstile widget are present, the DOM
+        selector is more specific and should win — TURNSTILE, not MANAGED.
+        """
         page = make_page(
             title="Just a moment...",
             selectors={".cf-turnstile": True},
         )
         result = await detect_challenge(page)
-        assert result.challenge_type == ChallengeType.JS_CHALLENGE
-        assert "title:" in result.selector_matched
+        assert result.challenge_type == ChallengeType.TURNSTILE
+        assert result.selector_matched == ".cf-turnstile"
 
 
 # --- wait_for_challenge_resolution ---
@@ -258,7 +268,8 @@ class TestWaitForChallengeResolution:
         )
         assert result.resolved is True
         assert result.method == "auto_resolve"
-        assert result.challenge_type == ChallengeType.JS_CHALLENGE
+        # Title-only detection now returns MANAGED (not JS_CHALLENGE)
+        assert result.challenge_type == ChallengeType.MANAGED
 
     @pytest.mark.asyncio
     async def test_resolves_via_resolved_selector(self):
@@ -293,7 +304,8 @@ class TestWaitForChallengeResolution:
         )
         assert result.resolved is False
         assert "timeout" in result.error.lower()
-        assert result.challenge_type == ChallengeType.JS_CHALLENGE
+        # Title-only detection now returns MANAGED (not JS_CHALLENGE)
+        assert result.challenge_type == ChallengeType.MANAGED
 
 
 # --- solve_turnstile_capsolver ---
@@ -385,6 +397,8 @@ class TestExtractTurnstileSitekey:
     async def test_returns_none_when_no_sitekey_found(self):
         page = AsyncMock()
         page.query_selector = AsyncMock(return_value=None)
+        page.evaluate = AsyncMock(return_value=None)
+        page.content = AsyncMock(return_value="<html><body>Normal page</body></html>")
         result = await _extract_turnstile_sitekey(page)
         assert result is None
 
@@ -477,7 +491,8 @@ class TestLocalizedChallengeDetection:
         page = make_page(title="Um momento...")
         result = await detect_challenge(page)
         assert result.detected is True
-        assert result.challenge_type == ChallengeType.JS_CHALLENGE
+        # Title-only match now classifies as MANAGED (CapSolver-eligible)
+        assert result.challenge_type == ChallengeType.MANAGED
         assert "um momento" in result.selector_matched
 
     @pytest.mark.asyncio
@@ -533,3 +548,311 @@ class TestConstants:
     def test_challenge_title_patterns_populated(self):
         assert len(CHALLENGE_TITLE_PATTERNS) >= 5
         assert "just a moment" in CHALLENGE_TITLE_PATTERNS
+
+
+# --- _click_turnstile_checkbox ---
+
+
+class TestClickTurnstileCheckbox:
+    """Tests for interactive Turnstile widget click approach."""
+
+    @pytest.mark.asyncio
+    async def test_click_finds_iframe_and_clicks_checkbox(self):
+        """When Turnstile iframe has a clickable element, click succeeds."""
+        page = AsyncMock()
+
+        # Mock frame_locator -> locator chain
+        mock_checkbox = AsyncMock()
+        mock_checkbox.count = AsyncMock(return_value=1)
+        mock_checkbox.first = AsyncMock()
+        mock_checkbox.first.click = AsyncMock()
+
+        mock_frame = MagicMock()
+        mock_frame.locator = MagicMock(return_value=mock_checkbox)
+
+        page.frame_locator = MagicMock(return_value=mock_frame)
+
+        result = await _click_turnstile_checkbox(page)
+        assert result is True
+        page.frame_locator.assert_called_once()
+        mock_checkbox.first.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_click_no_iframe_returns_false(self):
+        """When no Turnstile iframe exists, returns False gracefully."""
+        page = AsyncMock()
+        page.frame_locator = MagicMock(side_effect=Exception("No frame found"))
+
+        result = await _click_turnstile_checkbox(page)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_click_no_checkbox_in_iframe_tries_body(self):
+        """When checkbox not found in iframe, tries clicking iframe body."""
+        page = AsyncMock()
+
+        # Checkbox not found (count=0), body found (count=1)
+        mock_checkbox = AsyncMock()
+        mock_checkbox.count = AsyncMock(return_value=0)
+
+        mock_body = AsyncMock()
+        mock_body.count = AsyncMock(return_value=1)
+        mock_body.first = AsyncMock()
+        mock_body.first.click = AsyncMock()
+
+        call_count = 0
+
+        def locator_side_effect(sel):
+            nonlocal call_count
+            call_count += 1
+            if "checkbox" in sel or "type=" in sel:
+                return mock_checkbox
+            return mock_body
+
+        mock_frame = MagicMock()
+        mock_frame.locator = MagicMock(side_effect=locator_side_effect)
+        page.frame_locator = MagicMock(return_value=mock_frame)
+
+        result = await _click_turnstile_checkbox(page)
+        assert result is True
+        mock_body.first.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_click_exception_is_non_fatal(self):
+        """Errors during click don't raise — returns False."""
+        page = AsyncMock()
+
+        mock_checkbox = AsyncMock()
+        mock_checkbox.count = AsyncMock(side_effect=Exception("Frame detached"))
+
+        mock_frame = MagicMock()
+        mock_frame.locator = MagicMock(return_value=mock_checkbox)
+        page.frame_locator = MagicMock(return_value=mock_frame)
+
+        result = await _click_turnstile_checkbox(page)
+        assert result is False
+
+
+# --- _format_proxy_for_capsolver ---
+
+
+class TestFormatProxyForCapsolver:
+    def test_formats_playwright_proxy_to_capsolver(self):
+        """Convert Playwright proxy dict to CapSolver ip:port:user:pass format."""
+        proxy = {
+            "server": "http://gate.decodo.com:7777",
+            "username": "user-abc-country-us-session-123-sessionduration-10",
+            "password": "s3cret",
+        }
+        result = _format_proxy_for_capsolver(proxy)
+        assert result == "gate.decodo.com:7777:user-abc-country-us-session-123-sessionduration-10:s3cret"
+
+    def test_handles_https_scheme(self):
+        proxy = {
+            "server": "https://proxy.example.com:8080",
+            "username": "user1",
+            "password": "pass1",
+        }
+        result = _format_proxy_for_capsolver(proxy)
+        assert result == "proxy.example.com:8080:user1:pass1"
+
+    def test_handles_no_scheme(self):
+        proxy = {
+            "server": "proxy.example.com:8080",
+            "username": "user1",
+            "password": "pass1",
+        }
+        result = _format_proxy_for_capsolver(proxy)
+        assert result == "proxy.example.com:8080:user1:pass1"
+
+    def test_returns_none_for_no_proxy(self):
+        assert _format_proxy_for_capsolver(None) is None
+        assert _format_proxy_for_capsolver({}) is None
+
+    def test_returns_none_for_missing_credentials(self):
+        proxy = {"server": "http://proxy.example.com:8080"}
+        assert _format_proxy_for_capsolver(proxy) is None
+
+
+# --- solve_managed_challenge_capsolver ---
+
+
+class TestSolveManagedChallengeCapsolver:
+    """Tests for the AntiCloudflareTask CapSolver approach (managed challenges)."""
+
+    @pytest.mark.asyncio
+    async def test_no_api_key_returns_error(self, monkeypatch):
+        monkeypatch.delenv("CAPSOLVER_API_KEY", raising=False)
+        page = make_page()
+        result = await solve_managed_challenge_capsolver(page, "https://capterra.com", proxy_config=None)
+        assert result.resolved is False
+        assert "CAPSOLVER_API_KEY" in result.error
+
+    @pytest.mark.asyncio
+    async def test_no_proxy_returns_error(self, monkeypatch):
+        monkeypatch.setenv("CAPSOLVER_API_KEY", "test-key")
+        page = make_page()
+        result = await solve_managed_challenge_capsolver(page, "https://capterra.com", proxy_config=None)
+        assert result.resolved is False
+        assert "proxy" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_calls_managed_api_with_proxy(self, monkeypatch):
+        """Verify _call_capsolver_managed is invoked with correct proxy string."""
+        monkeypatch.setenv("CAPSOLVER_API_KEY", "test-key")
+        proxy = {
+            "server": "http://gate.decodo.com:7777",
+            "username": "user-abc",
+            "password": "pass",
+        }
+        page = make_page(title="Normal Page After Solve")
+        page.context = AsyncMock()
+        page.context.add_cookies = AsyncMock()
+        page.reload = AsyncMock()
+
+        captured_args = {}
+
+        async def mock_call_managed(api_key, site_url, proxy_str, timeout_ms):
+            captured_args["api_key"] = api_key
+            captured_args["proxy_str"] = proxy_str
+            captured_args["site_url"] = site_url
+            return None  # Failure
+
+        with patch("app.challenge_solver._call_capsolver_managed", mock_call_managed):
+            result = await solve_managed_challenge_capsolver(
+                page, "https://capterra.com", proxy_config=proxy, timeout_ms=5000,
+            )
+
+        assert captured_args["proxy_str"] == "gate.decodo.com:7777:user-abc:pass"
+        assert captured_args["site_url"] == "https://capterra.com"
+        assert result.resolved is False
+
+    @pytest.mark.asyncio
+    async def test_success_injects_cookies(self, monkeypatch):
+        """On success, cf_clearance cookie is set in the browser context."""
+        monkeypatch.setenv("CAPSOLVER_API_KEY", "test-key")
+        proxy = {
+            "server": "http://gate.decodo.com:7777",
+            "username": "user-abc",
+            "password": "pass",
+        }
+        page = make_page(title="Normal Page After Solve")
+        page.context = AsyncMock()
+        page.context.add_cookies = AsyncMock()
+        page.reload = AsyncMock()
+
+        async def mock_call_managed(api_key, site_url, proxy_str, timeout_ms):
+            return {
+                "cookies": {"cf_clearance": "abc123"},
+                "userAgent": "Mozilla/5.0 ...",
+            }
+
+        with patch("app.challenge_solver._call_capsolver_managed", mock_call_managed):
+            result = await solve_managed_challenge_capsolver(
+                page, "https://capterra.com", proxy_config=proxy, timeout_ms=30000,
+            )
+
+        assert result.resolved is True
+        assert result.method == "capsolver_managed"
+        page.context.add_cookies.assert_awaited_once()
+
+
+# --- resolve_challenge with click + managed CapSolver ---
+
+
+class TestResolveChallengeWithClickAndManaged:
+    """Tests for the updated resolve pipeline: auto → click → managed capsolver → turnstile capsolver."""
+
+    @pytest.mark.asyncio
+    async def test_click_tried_before_capsolver(self):
+        """For managed challenges, click is attempted before CapSolver."""
+        page = make_page(
+            title="Just a moment...",
+            selectors={"#cf-challenge-running": True},
+        )
+        proxy = {"server": "http://proxy:7777", "username": "u", "password": "p"}
+
+        click_called = False
+        capsolver_called = False
+
+        async def mock_click(p):
+            nonlocal click_called
+            click_called = True
+            return False  # Click fails
+
+        async def mock_managed_capsolver(p, url, **kwargs):
+            nonlocal capsolver_called
+            capsolver_called = True
+            return ChallengeResult(resolved=False, error="test")
+
+        with patch("app.challenge_solver._click_turnstile_checkbox", mock_click), \
+             patch("app.challenge_solver.solve_managed_challenge_capsolver", mock_managed_capsolver):
+            result = await resolve_challenge(
+                page, "https://capterra.com",
+                auto_wait_ms=100, capsolver_timeout_ms=100,
+                proxy_config=proxy,
+            )
+
+        assert click_called, "Click should be attempted before CapSolver"
+        assert capsolver_called, "CapSolver should be tried after click fails"
+
+    @pytest.mark.asyncio
+    async def test_click_success_skips_capsolver(self):
+        """If click resolves the challenge, CapSolver is not called."""
+        page = make_page(title="Just a moment...")
+        click_happened = False
+
+        async def changing_title():
+            if click_happened:
+                return "Normal Page"
+            return "Just a moment..."
+
+        page.title = AsyncMock(side_effect=changing_title)
+
+        capsolver_called = False
+
+        async def mock_click(p):
+            nonlocal click_happened
+            click_happened = True
+            return True  # Click succeeded
+
+        async def mock_managed(p, url, **kwargs):
+            nonlocal capsolver_called
+            capsolver_called = True
+            return ChallengeResult(resolved=False, error="test")
+
+        with patch("app.challenge_solver._click_turnstile_checkbox", mock_click), \
+             patch("app.challenge_solver.solve_managed_challenge_capsolver", mock_managed):
+            result = await resolve_challenge(
+                page, "https://capterra.com",
+                auto_wait_ms=100, capsolver_timeout_ms=100,
+            )
+
+        assert result.resolved is True
+        assert result.method == "click"
+        assert not capsolver_called
+
+    @pytest.mark.asyncio
+    async def test_proxy_config_passed_to_managed_solver(self):
+        """Proxy config from resolve_challenge flows to solve_managed_challenge_capsolver."""
+        page = make_page(title="Just a moment...")
+        proxy = {"server": "http://proxy:7777", "username": "u", "password": "p"}
+
+        received_proxy = {}
+
+        async def mock_click(p):
+            return False
+
+        async def mock_managed(p, url, proxy_config=None, **kwargs):
+            received_proxy.update(proxy_config or {})
+            return ChallengeResult(resolved=False, error="test")
+
+        with patch("app.challenge_solver._click_turnstile_checkbox", mock_click), \
+             patch("app.challenge_solver.solve_managed_challenge_capsolver", mock_managed):
+            await resolve_challenge(
+                page, "https://capterra.com",
+                auto_wait_ms=100, capsolver_timeout_ms=100,
+                proxy_config=proxy,
+            )
+
+        assert received_proxy == proxy
