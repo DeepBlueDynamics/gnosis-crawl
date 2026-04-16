@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     # Authentication
     disable_auth: bool = False
-    gnosis_auth_url: str = "http://gnosis-auth:5000"
+    gnosis_auth_url: str = "https://auth.nuts.services"
 
     # Crawling Configuration
     max_concurrent_crawls: int = 5

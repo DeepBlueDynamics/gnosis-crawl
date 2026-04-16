@@ -139,7 +139,8 @@ class CrawlerEngine:
         proxy=None,
         client_timeout_seconds: Optional[int] = None,
         domain: str = None,
-        proxy_server: str = None
+        proxy_server: str = None,
+        cookies: Optional[Dict[str, str]] = None,
     ) -> CrawlResult:
         """
         Crawl a single URL and return comprehensive results.
@@ -202,7 +203,8 @@ class CrawlerEngine:
                     proxy=proxy,
                     client_timeout_seconds=client_timeout_seconds,
                     domain=domain,
-                    proxy_server=proxy_server
+                    proxy_server=proxy_server,
+                    cookies=cookies,
                 )
 
             result.html, result.page_info, screenshot_data = await run_capture(javascript)
@@ -367,6 +369,12 @@ class CrawlerEngine:
         # Challenge pages inject ~8K bytes of JS, triggering has_substantial_content,
         # but produce <100 chars of actual markdown content.
         html_heavy_no_markdown = html_len > 3000 and markdown_len < 100
+
+        # Incapsula/Imperva: tiny HTML with the challenge script — flag immediately
+        # without the substantial-content exemption (the page is always tiny).
+        incapsula_sigs = ["/_incapsula_resource", "incapsula_resource"]
+        if any(s in combined for s in incapsula_sigs):
+            return True, "incapsula_challenge", False
 
         patterns = [
             ("cloudflare", "cloudflare_challenge"),

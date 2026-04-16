@@ -26,6 +26,9 @@ _BROWSER_NEEDED_MARKERS = [
     'browser check',
     'ddos-guard',
     'datadome',
+    '_incapsula_resource',
+    'incapsula_resource',
+    'visid_incap_',
 ]
 
 

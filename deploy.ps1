@@ -204,7 +204,7 @@ switch ($Target) {
         $EnvVars = @(
             "RUNNING_IN_CLOUD=true",
             "GCS_BUCKET_NAME=grub-crawl-storage-prod",
-            "GNOSIS_AUTH_URL=https://gnosis-auth-$($ProjectId.Replace('_', '-')).a.run.app",
+            "GNOSIS_AUTH_URL=https://auth.nuts.services",
             "GOOGLE_CLOUD_PROJECT=$ProjectId"
         )
 

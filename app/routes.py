@@ -129,7 +129,8 @@ async def crawl_single_url(
             wait_after_load_ms=request.options.wait_after_load_ms,
             retry_with_js_if_thin=request.options.retry_with_js_if_thin,
             session_id=session_id,
-            proxy=proxy
+            proxy=proxy,
+            cookies=request.options.cookies,
         )
         
         if result.success:
@@ -275,7 +276,8 @@ async def crawl_markdown_only(
                 wait_after_load_ms=request.options.wait_after_load_ms,
                 retry_with_js_if_thin=request.options.retry_with_js_if_thin,
                 proxy=proxy,
-                client_timeout_seconds=client_timeout_seconds
+                client_timeout_seconds=client_timeout_seconds,
+                cookies=request.options.cookies,
             )
             payload = _crawl_result_to_payload(crawl_result, include_html=False)
             cache_doc = None

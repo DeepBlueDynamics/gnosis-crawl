@@ -465,6 +465,7 @@ class BrowserEngine:
         simulate_human: bool = False,
         scroll_count: int = 3,
         platform: str = None,
+        cookies: Optional[dict] = None,
     ) -> tuple[str, dict, bytes]:
         """Crawl URL using an isolated context for concurrent operations.
 
@@ -509,6 +510,29 @@ class BrowserEngine:
                             crawl_started_at = asyncio.get_running_loop().time()
                             wait_strategy = wait_until if wait_until in {"domcontentloaded", "networkidle", "selector"} else "domcontentloaded"
                             goto_wait_until = "domcontentloaded" if wait_strategy == "selector" else wait_strategy
+
+                            # Inject caller-supplied cookies before navigation
+                            if cookies:
+                                from urllib.parse import urlparse as _up
+                                _parsed = _up(url)
+                                _domain = _parsed.netloc.lower()
+                                if _domain.startswith("www."):
+                                    _domain = _domain[4:]
+                                cookie_list = [
+                                    {
+                                        "name": k,
+                                        "value": v,
+                                        "domain": f".{_domain}",
+                                        "path": "/",
+                                        "secure": _parsed.scheme == "https",
+                                    }
+                                    for k, v in cookies.items()
+                                ]
+                                try:
+                                    await context.add_cookies(cookie_list)
+                                    logger.info(f"Injected {len(cookie_list)} caller cookie(s) for {_domain}")
+                                except Exception as _ce:
+                                    logger.warning(f"Cookie injection failed: {_ce}")
 
                             navigation_started_at = asyncio.get_running_loop().time()
                             response = await page.goto(url, timeout=timeout, wait_until=goto_wait_until)

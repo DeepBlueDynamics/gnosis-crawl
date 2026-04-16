@@ -1,8 +1,9 @@
 """
-Cloudflare Challenge Solver for gnosis-crawl.
+Challenge Solver for gnosis-crawl.
 
-Detects and waits for Cloudflare challenges to auto-resolve on Playwright pages.
-Falls back to CapSolver API for visible Turnstile challenges that don't auto-resolve.
+Detects and resolves bot-protection challenges (Cloudflare and Incapsula/Imperva)
+on Playwright pages. Cloudflare: auto-resolve + CapSolver fallback.
+Incapsula: cookie-wait + mouse/scroll simulation during challenge.
 """
 
 import asyncio
@@ -16,11 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 class ChallengeType(str, Enum):
-    """Types of Cloudflare challenges."""
+    """Types of bot challenges."""
     TURNSTILE = "turnstile"
     JS_CHALLENGE = "js_challenge"
     BROWSER_CHECK = "browser_check"
     MANAGED = "managed_challenge"
+    INCAPSULA = "incapsula"
     NONE = "none"
 
 
@@ -59,6 +61,16 @@ RESOLVED_SELECTORS = [
     '#challenge-success',
     '#challenge-stage[style*="display: none"]',
 ]
+
+# Incapsula/Imperva markers in page HTML
+INCAPSULA_HTML_MARKERS = [
+    '/_incapsula_resource',
+    'incapsula_resource',
+    'visid_incap_',
+]
+
+# Incapsula cookie names that indicate challenge completion
+INCAPSULA_COOKIE_NAMES = ['visid_incap_', 'incap_ses_', 'reese84']
 
 # Title patterns that indicate a challenge page
 CHALLENGE_TITLE_PATTERNS = [
@@ -567,6 +579,107 @@ async def solve_managed_challenge_capsolver(
         )
 
 
+async def detect_incapsula(page) -> bool:
+    """Detect if an Incapsula/Imperva JS challenge is present on the page."""
+    try:
+        content = await page.content()
+        content_lower = content.lower()
+        for marker in INCAPSULA_HTML_MARKERS:
+            if marker in content_lower:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+async def resolve_incapsula(
+    page,
+    url: str,
+    timeout_ms: int = 15000,
+) -> ChallengeResult:
+    """
+    Resolve an Incapsula/Imperva JS challenge.
+
+    Incapsula's challenge page runs fingerprinting JS, sets visid_incap_* /
+    incap_ses_* cookies, then auto-navigates. We:
+      1. Simulate mouse movement + scrolling so the fingerprinting sees real
+         browser events (Playwright dispatches actual browser events, not
+         synthetic JS — Incapsula can't distinguish these from a real user).
+      2. Poll for incap cookies being set.
+      3. Once cookies appear, navigate to the real URL with those cookies.
+    """
+    start_ms = int(asyncio.get_event_loop().time() * 1000)
+
+    # Simulate human behaviour while the challenge JS is fingerprinting us.
+    try:
+        from app.human_behavior import human_scroll, simulate_mouse_movement
+        from app.behavior_profile import BehaviorProfile
+        profile = BehaviorProfile.random()
+        await simulate_mouse_movement(page, profile=profile)
+        await human_scroll(page, scroll_count=2, profile=profile)
+    except Exception as hb_err:
+        logger.debug(f"Incapsula: human behaviour simulation failed: {hb_err}")
+
+    poll_interval_s = 1.0
+    elapsed = 0
+
+    while elapsed < timeout_ms:
+        await asyncio.sleep(poll_interval_s)
+        elapsed = int(asyncio.get_event_loop().time() * 1000) - start_ms
+
+        # Check if the challenge page navigated away on its own
+        if not await detect_incapsula(page):
+            logger.info(f"Incapsula challenge auto-resolved in {elapsed}ms")
+            return ChallengeResult(
+                resolved=True,
+                challenge_type=ChallengeType.INCAPSULA,
+                method="auto_resolve",
+                wait_time_ms=elapsed,
+            )
+
+        # Check whether the challenge JS has set incap cookies yet
+        try:
+            cookies = await page.context.cookies()
+            incap_cookies = [
+                c for c in cookies
+                if any(marker in c.get("name", "").lower() for marker in INCAPSULA_COOKIE_NAMES)
+            ]
+            if incap_cookies:
+                logger.info(
+                    f"Incapsula: {len(incap_cookies)} challenge cookie(s) detected "
+                    f"after {elapsed}ms — re-navigating to {url}"
+                )
+                try:
+                    await page.goto(url, timeout=20000, wait_until="domcontentloaded")
+                    await asyncio.sleep(2)
+                    elapsed = int(asyncio.get_event_loop().time() * 1000) - start_ms
+                    if not await detect_incapsula(page):
+                        logger.info(f"Incapsula resolved via cookie re-navigation in {elapsed}ms")
+                        return ChallengeResult(
+                            resolved=True,
+                            challenge_type=ChallengeType.INCAPSULA,
+                            method="auto_resolve",
+                            wait_time_ms=elapsed,
+                        )
+                    # Cookies set but still blocked — do another round of mouse simulation
+                    try:
+                        await simulate_mouse_movement(page, profile=profile)
+                    except Exception:
+                        pass
+                except Exception as nav_err:
+                    logger.debug(f"Incapsula: re-navigation failed: {nav_err}")
+        except Exception:
+            pass
+
+    return ChallengeResult(
+        resolved=False,
+        challenge_type=ChallengeType.INCAPSULA,
+        method="none",
+        wait_time_ms=elapsed,
+        error=f"Incapsula challenge timeout after {timeout_ms}ms",
+    )
+
+
 async def resolve_challenge(
     page,
     site_url: str,
@@ -582,6 +695,11 @@ async def resolve_challenge(
     4. Try AntiCloudflareTask (managed challenges, needs proxy)
     5. Try AntiTurnstileTaskProxyLess (standalone Turnstile, needs sitekey)
     """
+    # Check for Incapsula before Cloudflare — different pipeline entirely
+    if await detect_incapsula(page):
+        logger.info(f"Incapsula/Imperva challenge detected at {site_url}")
+        return await resolve_incapsula(page, site_url, timeout_ms=auto_wait_ms)
+
     detection = await detect_challenge(page)
     if not detection.detected:
         return ChallengeResult(resolved=True, method="none", wait_time_ms=0)

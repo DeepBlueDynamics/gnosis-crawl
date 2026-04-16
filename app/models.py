@@ -31,6 +31,7 @@ class CrawlOptions(BaseModel):
     wait_after_load_ms: int = Field(default=1000, ge=0, le=60000)
     retry_with_js_if_thin: bool = False
     proxy: Optional[ProxyConfig] = None
+    cookies: Optional[Dict[str, str]] = None
 
 
 class CrawlRequest(BaseModel):
