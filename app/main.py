@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from typing import Dict, Any, AsyncGenerator, Optional
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -174,8 +175,7 @@ _ENDPOINT_HINT = {
     "hint": "All POST endpoints accept JSON. See /docs for full schema.",
 }
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(_: Request, exc: HTTPException):
+async def _http_exception_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:
     detail = exc.detail
     if isinstance(detail, dict):
         details = detail
@@ -185,6 +185,9 @@ async def http_exception_handler(_: Request, exc: HTTPException):
     if exc.status_code == 404:
         body["grub"] = _ENDPOINT_HINT
     return JSONResponse(status_code=exc.status_code, content=body)
+
+app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
+app.add_exception_handler(HTTPException, _http_exception_handler)
 
 
 @app.exception_handler(RequestValidationError)
