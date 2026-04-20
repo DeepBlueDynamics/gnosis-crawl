@@ -158,6 +158,22 @@ app = FastAPI(
 )
 
 
+_ENDPOINT_HINT = {
+    "endpoints": {
+        "crawl":    "POST /api/crawl          {url, options?}",
+        "markdown": "POST /api/markdown       {url, options?}",
+        "batch":    "POST /api/batch          {urls: [...]}",
+        "jobs":     "POST /api/jobs/crawl     {url, session_id?}",
+        "agent":    "POST /api/agent/run      {task, config?}",
+        "tools":    "GET  /tools              list available AHP tools",
+        "view":     "GET  /view?url=...       render page as HTML",
+        "download": "GET  /download?url=...   fetch binary/file",
+        "health":   "GET  /health",
+        "docs":     "GET  /docs",
+    },
+    "hint": "All POST endpoints accept JSON. See /docs for full schema.",
+}
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(_: Request, exc: HTTPException):
     detail = exc.detail
@@ -165,14 +181,10 @@ async def http_exception_handler(_: Request, exc: HTTPException):
         details = detail
     else:
         details = {"message": str(detail)}
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "error": "http_error",
-            "status": exc.status_code,
-            "details": details,
-        },
-    )
+    body: dict = {"error": "http_error", "status": exc.status_code, "details": details}
+    if exc.status_code == 404:
+        body["grub"] = _ENDPOINT_HINT
+    return JSONResponse(status_code=exc.status_code, content=body)
 
 
 @app.exception_handler(RequestValidationError)
