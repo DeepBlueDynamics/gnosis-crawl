@@ -23,7 +23,7 @@ from app.routes import router
 from app.job_routes import router as job_router
 from app.agent_routes import router as agent_router
 from app.tools.tool_registry import get_global_registry, ToolError
-from app.core.middleware import ContentTypeMiddleware, AuthMiddleware, NotFoundEnricherMiddleware
+from app.core.middleware import ContentTypeMiddleware, AuthMiddleware
 from app.auth import validate_token_from_query
 from app.crawler import get_crawler_engine
 
@@ -214,8 +214,30 @@ async def unhandled_exception_handler(_: Request, exc: Exception):
         },
     )
 
+_BARE_404 = b'{"detail":"Not Found"}'
+_ENRICHED_404 = {
+    "error": "http_error",
+    "status": 404,
+    "details": {"message": "Not Found"},
+    "grub": _ENDPOINT_HINT,
+}
+
+@app.middleware("http")
+async def enrich_404(request: Request, call_next):
+    """Rewrite bare Starlette routing 404s to include the endpoint hint."""
+    response = await call_next(request)
+    if response.status_code != 404:
+        return response
+    body = b""
+    async for chunk in response.body_iterator:
+        body += chunk
+    if body.strip() == _BARE_404:
+        return JSONResponse(status_code=404, content=_ENRICHED_404)
+    from starlette.responses import Response as _Response
+    return _Response(content=body, status_code=404,
+                     headers=dict(response.headers), media_type=response.media_type)
+
 # Add middleware (order matters — outermost last)
-app.add_middleware(NotFoundEnricherMiddleware)
 app.add_middleware(ContentTypeMiddleware)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(
