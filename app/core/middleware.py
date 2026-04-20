@@ -30,33 +30,68 @@ _ENDPOINT_HINT = {
 }
 
 
-class NotFoundEnricherMiddleware(BaseHTTPMiddleware):
-    """Rewrites bare Starlette 404s to include the endpoint hint."""
+_BARE_404 = b'{"detail":"Not Found"}'
+_ENRICHED_404 = json.dumps({
+    "error": "http_error",
+    "status": 404,
+    "details": {"message": "Not Found"},
+    "grub": _ENDPOINT_HINT,
+}).encode()
 
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        if response.status_code != 404:
-            return response
-        # Read the body — only rewrite the exact default Starlette 404
-        body = b""
-        async for chunk in response.body_iterator:
-            body += chunk
-        if body.strip() == b'{"detail":"Not Found"}':
-            enriched = {
-                "error": "http_error",
-                "status": 404,
-                "details": {"message": "Not Found"},
-                "grub": _ENDPOINT_HINT,
-            }
-            return JSONResponse(status_code=404, content=enriched)
-        # Not a bare 404 — return original response with body re-streamed
-        from starlette.responses import Response
-        return Response(
-            content=body,
-            status_code=response.status_code,
-            headers=dict(response.headers),
-            media_type=response.media_type,
-        )
+
+class NotFoundEnricherMiddleware:
+    """Raw ASGI middleware — rewrites bare Starlette 404s to include the endpoint hint.
+
+    Uses raw ASGI send interception instead of BaseHTTPMiddleware to avoid
+    the known issue where BaseHTTPMiddleware can't reliably intercept
+    routing-layer 404s.
+    """
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        status_code = None
+        start_message = None
+        body_chunks: list = []
+
+        async def send_wrapper(message):
+            nonlocal status_code, start_message
+
+            if message["type"] == "http.response.start":
+                status_code = message.get("status", 200)
+                if status_code == 404:
+                    start_message = message  # hold — decide after seeing body
+                    return
+                await send(message)
+
+            elif message["type"] == "http.response.body":
+                if status_code == 404:
+                    body_chunks.append(message.get("body", b""))
+                    if not message.get("more_body", False):
+                        body = b"".join(body_chunks)
+                        if body.strip() == _BARE_404:
+                            out = _ENRICHED_404
+                            headers = [
+                                (b"content-type", b"application/json"),
+                                (b"content-length", str(len(out)).encode()),
+                            ]
+                        else:
+                            out = body
+                            headers = list(start_message.get("headers", []))
+                        await send({"type": "http.response.start", "status": 404, "headers": headers})
+                        await send({"type": "http.response.body", "body": out})
+                    return
+                await send(message)
+
+            else:
+                await send(message)
+
+        await self.app(scope, receive, send_wrapper)
 
 
 class ContentTypeMiddleware(BaseHTTPMiddleware):
