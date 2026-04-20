@@ -4,7 +4,7 @@ API routes for Grub Crawler service
 import uuid
 import logging
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from datetime import datetime
 
 from app.models import (
@@ -18,7 +18,7 @@ from app.models import (
 from app.auth import get_current_user, get_user_email, get_customer_identifier
 from app.config import settings
 from app.crawler import get_crawler_engine
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse
 from app.storage import CrawlStorageService
 from app.cache_store import RemoteCacheStore
 from app.proxy import resolve_proxy
@@ -837,3 +837,34 @@ async def get_session_file(
     except Exception as e:
         logger.error(f"Failed to fetch session file '{path}': {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Catch-all inside the /api router — returns endpoint hint instead of bare 404.
+# Starlette's Mount intercepts /api/* before the app-level catch-all can fire.
+_API_ENDPOINT_HINT = {
+    "endpoints": {
+        "crawl":    "POST /api/crawl          {url, options?}",
+        "markdown": "POST /api/markdown       {url, options?}",
+        "batch":    "POST /api/batch          {urls: [...]}",
+        "jobs":     "POST /api/jobs/crawl     {url, session_id?}",
+        "agent":    "POST /api/agent/run      {task, config?}",
+        "tools":    "GET  /tools              list available AHP tools",
+        "view":     "GET  /view?url=...       render page as HTML",
+        "download": "GET  /download?url=...   fetch binary/file",
+        "health":   "GET  /health",
+        "docs":     "GET  /docs",
+    },
+    "hint": "All POST endpoints accept JSON. See /docs for full schema.",
+}
+
+@router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+async def api_not_found(path: str, request: Request):
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": "http_error",
+            "status": 404,
+            "details": {"message": f"Not Found: /api/{path}"},
+            "grub": _API_ENDPOINT_HINT,
+        },
+    )
