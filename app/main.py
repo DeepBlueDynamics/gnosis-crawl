@@ -228,14 +228,8 @@ async def enrich_404(request: Request, call_next):
     response = await call_next(request)
     if response.status_code != 404:
         return response
-    body = b""
-    async for chunk in response.body_iterator:
-        body += chunk
-    if body.strip() == _BARE_404:
-        return JSONResponse(status_code=404, content=_ENRICHED_404)
-    from starlette.responses import Response as _Response
-    return _Response(content=body, status_code=404,
-                     headers=dict(response.headers), media_type=response.media_type)
+    # Middleware IS running — return enriched hint for any 404
+    return JSONResponse(status_code=404, content=_ENRICHED_404)
 
 # Add middleware (order matters — outermost last)
 app.add_middleware(ContentTypeMiddleware)
