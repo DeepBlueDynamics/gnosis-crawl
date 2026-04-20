@@ -467,6 +467,21 @@ async def execute_tool(
         logger.error(f"Tool execution failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Tool execution failed: {str(e)}")
 
+# Fallback catch-all — must be absolutely last.
+# BaseHTTPMiddleware swallows ASGI-layer 404s before exception handlers run,
+# so we need a real route to return the hint rather than relying on exception handlers.
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+async def global_not_found(path: str, request: Request):
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": "http_error",
+            "status": 404,
+            "details": {"message": "Not Found"},
+            "grub": _ENDPOINT_HINT,
+        },
+    )
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
