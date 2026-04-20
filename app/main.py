@@ -23,7 +23,7 @@ from app.routes import router
 from app.job_routes import router as job_router
 from app.agent_routes import router as agent_router
 from app.tools.tool_registry import get_global_registry, ToolError
-from app.core.middleware import ContentTypeMiddleware, AuthMiddleware
+from app.core.middleware import ContentTypeMiddleware, AuthMiddleware, NotFoundEnricherMiddleware
 from app.auth import validate_token_from_query
 from app.crawler import get_crawler_engine
 
@@ -214,7 +214,8 @@ async def unhandled_exception_handler(_: Request, exc: Exception):
         },
     )
 
-# Add middleware (order matters)
+# Add middleware (order matters — outermost last)
+app.add_middleware(NotFoundEnricherMiddleware)
 app.add_middleware(ContentTypeMiddleware)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(

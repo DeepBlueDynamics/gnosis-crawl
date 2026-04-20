@@ -2,6 +2,7 @@
 FastAPI Middleware for Grub Crawler - Authentication and Content-Type enforcement.
 """
 import os
+import json
 import logging
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -11,6 +12,52 @@ from starlette.types import ASGIApp
 from app.tools.tool_registry import get_global_registry
 
 logger = logging.getLogger(__name__)
+
+_ENDPOINT_HINT = {
+    "endpoints": {
+        "crawl":    "POST /api/crawl          {url, options?}",
+        "markdown": "POST /api/markdown       {url, options?}",
+        "batch":    "POST /api/batch          {urls: [...]}",
+        "jobs":     "POST /api/jobs/crawl     {url, session_id?}",
+        "agent":    "POST /api/agent/run      {task, config?}",
+        "tools":    "GET  /tools              list available AHP tools",
+        "view":     "GET  /view?url=...       render page as HTML",
+        "download": "GET  /download?url=...   fetch binary/file",
+        "health":   "GET  /health",
+        "docs":     "GET  /docs",
+    },
+    "hint": "All POST endpoints accept JSON. See /docs for full schema.",
+}
+
+
+class NotFoundEnricherMiddleware(BaseHTTPMiddleware):
+    """Rewrites bare Starlette 404s to include the endpoint hint."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        if response.status_code != 404:
+            return response
+        # Read the body — only rewrite the exact default Starlette 404
+        body = b""
+        async for chunk in response.body_iterator:
+            body += chunk
+        if body.strip() == b'{"detail":"Not Found"}':
+            enriched = {
+                "error": "http_error",
+                "status": 404,
+                "details": {"message": "Not Found"},
+                "grub": _ENDPOINT_HINT,
+            }
+            return JSONResponse(status_code=404, content=enriched)
+        # Not a bare 404 — return original response with body re-streamed
+        from starlette.responses import Response
+        return Response(
+            content=body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type=response.media_type,
+        )
+
 
 class ContentTypeMiddleware(BaseHTTPMiddleware):
     """
