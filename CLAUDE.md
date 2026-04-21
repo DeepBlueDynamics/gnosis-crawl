@@ -396,7 +396,7 @@ email = payload.get("sub", "unknown@grub-crawl.local")
 - `.env.cloud`: `GNOSIS_AUTH_URL=https://auth.nuts.services`
 - `deploy.ps1`: hardcoded `GNOSIS_AUTH_URL=https://auth.nuts.services` in env vars
 
-**Production Cloud Run service**: `grub-crawl` at `grub.nuts.services`
+**Production Cloud Run service**: `grubcrawler` at `grub.nuts.services` / `grubcrawler.dev`
 **Test token**: stored in `.env` (not committed) — obtain from nuts.services dashboard
 
 ### Challenge Solver: Added Incapsula/Imperva support
@@ -449,18 +449,33 @@ Users can now pass pre-solved cookies (e.g. from a browser session) to bypass ch
 ./deploy.ps1 -Target local
 # Then test against http://localhost:6792
 
-# Only then deploy to Cloud Run
-./deploy.ps1 -Target cloudrun -Tag v1.x.x
-# OR: gcloud run deploy grubcrawler --source . --region us-central1 --project gnosis-459403 --allow-unauthenticated --port 6792
+# Only then deploy to Cloud Run — MUST use grubcrawler, NOT grub-crawl
+gcloud run deploy grubcrawler --source . --region us-central1 --project gnosis-459403 --allow-unauthenticated --port 6792
 ```
 
 Do NOT run `gcloud run deploy` without being asked. Do NOT run long deploys in Bash tool background processes. Use Hyperia terminal for long-running builds so the user can see progress.
+
+### ⚠️ Duplicate Service Warning
+
+There are TWO Cloud Run services in project `gnosis-459403`:
+
+| Service | Domains | Notes |
+|---------|---------|-------|
+| `grubcrawler` | `grub.nuts.services`, `grubcrawler.dev` | **CORRECT — deploy here** |
+| `grub-crawl` | none | Stale duplicate, created by accident on 2026-04-16 |
+
+**Always deploy to `grubcrawler`.** The `grub-crawl` service has no domain mappings and is not used. It can be deleted when convenient:
+```bash
+gcloud run services delete grub-crawl --region us-central1 --project gnosis-459403
+```
+
+When testing against the live service, use `grub.nuts.services` or `grubcrawler.dev`. Direct Cloud Run URLs (`grub-crawl-*.run.app`) point at the wrong service.
 
 ### Related Services
 
 | Service | URL | Cloud Run Name |
 |---------|-----|----------------|
-| grub-crawl (prod) | grub.nuts.services | grub-crawl |
+| grubcrawler (prod) | grub.nuts.services, grubcrawler.dev | grubcrawler |
 | nuts-auth | auth.nuts.services | gnosis-auth |
 | DeepBlue Dynamics site | deepbluedynamics.com | dbd-site |
 
