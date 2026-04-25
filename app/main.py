@@ -242,10 +242,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API routes (traditional REST endpoints)
-app.include_router(router, prefix="/api")
-app.include_router(job_router)  # Job routes already have /api prefix
-app.include_router(agent_router)  # Agent routes already have /api/agent prefix
+# Include API routes — specific routers before the catch-all in routes.py
+app.include_router(agent_router)  # /api/agent/* — must precede the /api catch-all
+app.include_router(job_router)    # /api/jobs/*  — must precede the /api catch-all
+app.include_router(router, prefix="/api")  # includes /{path:path} catch-all last
 
 # Mesh routes (conditional)
 if settings.mesh_enabled:

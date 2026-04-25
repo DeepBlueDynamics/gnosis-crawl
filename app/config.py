@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-4.1-mini"
     anthropic_api_key: Optional[str] = None
-    anthropic_model: str = "claude-3-5-sonnet-latest"
+    anthropic_model: str = "claude-haiku-4-5-20251001"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b-instruct"
 
