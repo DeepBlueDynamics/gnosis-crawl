@@ -184,7 +184,6 @@ async def agent_ghost(
     Bypasses DOM-based anti-bot detection by reading rendered pixels instead.
     """
     from app.agent.ghost import run_ghost_protocol, create_ghost_provider, GHOST_EXTRACTION_PROMPT
-    from app.stealth import resolve_proxy
 
     try:
         provider = create_ghost_provider()

@@ -36,3 +36,4 @@ browserforge>=1.2.0
 
 # LLM providers (for Ghost Protocol vision extraction)
 anthropic>=0.39.0
+openai>=1.0.0

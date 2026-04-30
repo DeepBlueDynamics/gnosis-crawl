@@ -15,6 +15,18 @@ from app.agent.ghost import (
 )
 
 
+class TestGhostRouteImports:
+    def test_agent_ghost_uses_proxy_module_for_proxy_resolution(self):
+        """Regression: /api/agent/ghost must not import resolve_proxy from stealth."""
+        import pathlib
+
+        route_path = pathlib.Path(__file__).parent.parent / "app" / "agent_routes.py"
+        source = route_path.read_text()
+
+        assert "from app.proxy import resolve_proxy" in source
+        assert "from app.stealth import resolve_proxy" not in source
+
+
 class TestBlockSignal:
     def test_all_signals(self):
         assert BlockSignal.CLOUDFLARE == "cloudflare_challenge"

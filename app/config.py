@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     browser_stream_max_lease_seconds: int = 300  # max time a slot can be leased
 
     # LLM Provider Configuration
-    agent_provider: str = "openai"  # openai | anthropic | ollama
+    agent_provider: str = "anthropic"  # openai | anthropic | ollama
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-4.1-mini"
     anthropic_api_key: Optional[str] = None
