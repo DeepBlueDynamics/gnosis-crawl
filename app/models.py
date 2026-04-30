@@ -32,6 +32,7 @@ class CrawlOptions(BaseModel):
     retry_with_js_if_thin: bool = False
     proxy: Optional[ProxyConfig] = None
     cookies: Optional[Dict[str, str]] = None
+    warmup: bool = False
 
 
 class CrawlRequest(BaseModel):

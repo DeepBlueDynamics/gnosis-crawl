@@ -141,6 +141,7 @@ class CrawlerEngine:
         domain: str = None,
         proxy_server: str = None,
         cookies: Optional[Dict[str, str]] = None,
+        warmup: bool = False,
     ) -> CrawlResult:
         """
         Crawl a single URL and return comprehensive results.
@@ -190,7 +191,7 @@ class CrawlerEngine:
             timeout_ms = (timeout * 1000) if timeout else settings.browser_timeout
             take_screenshot = screenshot and screenshot_mode != "off"
 
-            async def run_capture(javascript_enabled: bool):
+            async def run_capture(javascript_enabled: bool, warmup: bool = False):
                 return await browser.crawl_with_context(
                     url,
                     javascript_enabled=javascript_enabled,
@@ -205,9 +206,10 @@ class CrawlerEngine:
                     domain=domain,
                     proxy_server=proxy_server,
                     cookies=cookies,
+                    warmup=warmup,
                 )
 
-            result.html, result.page_info, screenshot_data = await run_capture(javascript)
+            result.html, result.page_info, screenshot_data = await run_capture(javascript, warmup=warmup)
             self._populate_result_metadata(result)
             self._populate_content_fields(result, url, dedupe_tables=dedupe_tables)
 

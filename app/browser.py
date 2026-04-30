@@ -466,6 +466,7 @@ class BrowserEngine:
         scroll_count: int = 3,
         platform: str = None,
         cookies: Optional[dict] = None,
+        warmup: bool = False,
     ) -> tuple[str, dict, bytes]:
         """Crawl URL using an isolated context for concurrent operations.
 
@@ -497,6 +498,23 @@ class BrowserEngine:
 
                 try:
                     original_context = context  # Track for cleanup if CapSolver swaps context
+
+                    # Warm-up: visit homepage first so bot-detection JS (Akamai, etc.) can set
+                    # session cookies, then fall through to the direct goto with a live session.
+                    # Also tries Google click-through which, if successful, skips the goto.
+                    warmed_already_on_page = False
+                    if warmup:
+                        from app.warmup_navigator import warmup_via_homepage, warmup_via_google, build_warmup_query_for_url
+                        await warmup_via_homepage(page, url, timeout_ms=min(timeout, 15000))
+                        # Also attempt Google click-through — if it lands us on the target, skip goto
+                        query = build_warmup_query_for_url(url)
+                        google_warmed = await warmup_via_google(page, url, query, timeout_ms=min(timeout, 15000))
+                        if google_warmed:
+                            logger.info(f"Google warm-up succeeded for {url} — skipping direct goto")
+                            warmed_already_on_page = True
+                        else:
+                            logger.debug(f"Warmup complete (homepage visited); proceeding with direct goto for {url}")
+
                     max_retries = 2
                     for attempt in range(max_retries):
                         # Check if client has likely given up (5s safety margin)
@@ -535,7 +553,13 @@ class BrowserEngine:
                                     logger.warning(f"Cookie injection failed: {_ce}")
 
                             navigation_started_at = asyncio.get_running_loop().time()
-                            response = await page.goto(url, timeout=timeout, wait_until=goto_wait_until)
+                            if warmed_already_on_page and attempt == 0:
+                                # Warmup already clicked through from Google — we're on the page organically
+                                if wait_after_load_ms > 0:
+                                    await asyncio.sleep(wait_after_load_ms / 1000.0)
+                                response = None
+                            else:
+                                response = await page.goto(url, timeout=timeout, wait_until=goto_wait_until)
                             navigation_ms = int((asyncio.get_running_loop().time() - navigation_started_at) * 1000)
 
                             wait_started_at = asyncio.get_running_loop().time()

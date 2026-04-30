@@ -131,8 +131,9 @@ async def crawl_single_url(
             session_id=session_id,
             proxy=proxy,
             cookies=request.options.cookies,
+            warmup=request.options.warmup,
         )
-        
+
         if result.success:
             saved_filename = None
             try:
@@ -278,6 +279,7 @@ async def crawl_markdown_only(
                 proxy=proxy,
                 client_timeout_seconds=client_timeout_seconds,
                 cookies=request.options.cookies,
+                warmup=request.options.warmup,
             )
             payload = _crawl_result_to_payload(crawl_result, include_html=False)
             cache_doc = None
