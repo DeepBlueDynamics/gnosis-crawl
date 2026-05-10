@@ -139,7 +139,7 @@ class MeshClient:
                 tool_call=tool_call,
                 context=context or MeshContext(),
                 mesh_token=sign_mesh_token(self.secret),
-                hop_count=1,
+                hop_count=0,  # origin request; receiver enforces 1-hop max
             )
             resp = await client.post(
                 f"{peer_url.rstrip('/')}/mesh/execute",
