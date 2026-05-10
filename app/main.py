@@ -78,6 +78,7 @@ async def lifespan(app: FastAPI):
                 peer_remove_s=settings.mesh_peer_remove_s,
                 tools=tool_names,
                 max_concurrent_crawls=settings.max_concurrent_crawls,
+                require_nonce=settings.mesh_require_nonce,
             )
             app.state.mesh_coordinator = coordinator
             await coordinator.start()

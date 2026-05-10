@@ -43,6 +43,7 @@ class MeshCoordinator:
         tools: List[str] | None = None,
         capabilities: List[str] | None = None,
         max_concurrent_crawls: int = 5,
+        require_nonce: bool = False,
     ):
         self.node_id = uuid.uuid4().hex[:12]
         self.node_name = node_name or platform.node()
@@ -53,6 +54,7 @@ class MeshCoordinator:
         self.peer_timeout_s = peer_timeout_s
         self.peer_remove_s = peer_remove_s
         self.max_concurrent_crawls = max_concurrent_crawls
+        self.require_nonce = require_nonce
 
         self.node_info = NodeInfo(
             node_id=self.node_id,
@@ -64,7 +66,7 @@ class MeshCoordinator:
 
         # Peer table: node_id -> PeerState
         self._peers: Dict[str, PeerState] = {}
-        self._client = MeshClient(secret)
+        self._client = MeshClient(secret, require_nonce=require_nonce)
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._running = False
 
@@ -173,7 +175,7 @@ class MeshCoordinator:
 
     def verify_token(self, token: str) -> bool:
         """Verify an incoming mesh token."""
-        return verify_mesh_token(token, self.secret)
+        return verify_mesh_token(token, self.secret, require_nonce=self.require_nonce)
 
     def get_self_load(self) -> NodeLoad:
         """Snapshot of this node's current load."""

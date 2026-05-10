@@ -113,6 +113,10 @@ class Settings(BaseSettings):
     mesh_prefer_local: bool = True  # bias toward local execution
     mesh_remote_timeout_ms: int = 35_000
     mesh_advertise_url: str = ""  # URL peers use to reach this node
+    # Replay protection — set true when mesh traffic transits public/untrusted networks.
+    # Senders include a nonce; receivers cache it and reject duplicates within the TTL.
+    # See app/mesh/auth.py for details.
+    mesh_require_nonce: bool = False
 
     class Config:
         env_file = ".env"

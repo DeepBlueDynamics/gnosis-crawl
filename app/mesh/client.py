@@ -36,9 +36,16 @@ EXECUTE_TIMEOUT_S = 35
 class MeshClient:
     """HTTP client for talking to mesh peers."""
 
-    def __init__(self, secret: str, timeout_s: float = DEFAULT_TIMEOUT_S):
+    def __init__(
+        self,
+        secret: str,
+        timeout_s: float = DEFAULT_TIMEOUT_S,
+        *,
+        require_nonce: bool = False,
+    ):
         self.secret = secret
         self.timeout_s = timeout_s
+        self._require_nonce = require_nonce
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -64,7 +71,7 @@ class MeshClient:
             client = await self._get_client()
             body = JoinRequest(
                 node_info=self_info,
-                mesh_token=sign_mesh_token(self.secret),
+                mesh_token=sign_mesh_token(self.secret, require_nonce=self._require_nonce),
             )
             resp = await client.post(
                 f"{peer_url.rstrip('/')}/mesh/join",
@@ -88,7 +95,7 @@ class MeshClient:
             client = await self._get_client()
             body = HeartbeatRequest(
                 node_load=load,
-                mesh_token=sign_mesh_token(self.secret),
+                mesh_token=sign_mesh_token(self.secret, require_nonce=self._require_nonce),
             )
             resp = await client.post(
                 f"{peer_url.rstrip('/')}/mesh/heartbeat",
@@ -110,7 +117,7 @@ class MeshClient:
             client = await self._get_client()
             body = LeaveRequest(
                 node_id=node_id,
-                mesh_token=sign_mesh_token(self.secret),
+                mesh_token=sign_mesh_token(self.secret, require_nonce=self._require_nonce),
             )
             resp = await client.post(
                 f"{peer_url.rstrip('/')}/mesh/leave",
@@ -138,7 +145,7 @@ class MeshClient:
             body = MeshToolRequest(
                 tool_call=tool_call,
                 context=context or MeshContext(),
-                mesh_token=sign_mesh_token(self.secret),
+                mesh_token=sign_mesh_token(self.secret, require_nonce=self._require_nonce),
                 hop_count=0,  # origin request; receiver enforces 1-hop max
             )
             resp = await client.post(
