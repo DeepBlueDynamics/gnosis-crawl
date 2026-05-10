@@ -19,8 +19,23 @@ try:
 except ImportError:
     _HAS_RUST = False
 
-# Pre-compile regex patterns
-LINK_PATTERN = re.compile(r'!?\[([^\]]+)\]\(([^)]+?)(?:\s+"([^"]*)")?\)')
+# Pre-compile regex patterns.
+# LINK_PATTERN allows one level of nested brackets in the link text
+# (e.g. `[Read [more] here](url)`). Python regex has no recursion, so this
+# is a one-deep approximation — sufficient for real-world markdown.
+LINK_PATTERN = re.compile(
+    r'!?\[((?:[^\[\]]|\[[^\[\]]*\])+)\]\(([^)]+?)(?:\s+"([^"]*)")?\)'
+)
+
+# Prefer lxml when available — it is significantly faster than html.parser
+# for the DOM traversals BeautifulSoup performs in this module. The Rust
+# `grub_md` extension is the primary path; this Python fallback is hit when
+# the extension is missing or fails on a specific document.
+try:
+    import lxml  # noqa: F401  — proves the parser is installed
+    _BS4_PARSER = "lxml"
+except ImportError:
+    _BS4_PARSER = "html.parser"
 
 
 @dataclass
@@ -49,7 +64,12 @@ class MarkdownResult:
 
 
 class HTMLToMarkdownConverter:
-    """Convert HTML to Markdown with enhanced filtering."""
+    """Convert HTML to Markdown with enhanced filtering.
+
+    Not thread-safe: ``_layout_table_depth`` is mutated during recursive
+    traversal. Construct a fresh converter per worker (or per call) if you
+    plan to share work across threads.
+    """
     
     def __init__(self, base_url: str = "", dedupe_tables: bool = True):
         self.base_url = base_url
@@ -71,7 +91,7 @@ class HTMLToMarkdownConverter:
         try:
             # Large pages (e.g. Wikipedia) can have deeply nested DOMs
             sys.setrecursionlimit(max(old_limit, 5000))
-            soup = BeautifulSoup(html, 'html.parser')
+            soup = BeautifulSoup(html, _BS4_PARSER)
 
             # Remove unwanted elements
             self._remove_unwanted_elements(soup)
@@ -210,24 +230,22 @@ class HTMLToMarkdownConverter:
     
     def _process_children(self, element) -> str:
         """Process all children of an element."""
-        result = ""
-        for child in element.children:
-            result += self._process_element(child)
-        return result
-    
+        parts = [self._process_element(child) for child in element.children]
+        return "".join(parts)
+
     def _get_text_content(self, element) -> str:
         """Get clean text content from element."""
         if isinstance(element, NavigableString):
             return str(element).strip()
-        
-        text = ""
+
+        parts = []
         for child in element.children:
             if isinstance(child, NavigableString):
-                text += str(child)
+                parts.append(str(child))
             else:
-                text += self._get_text_content(child)
-        
-        return ' '.join(text.split())  # Normalize whitespace
+                parts.append(self._get_text_content(child))
+
+        return ' '.join("".join(parts).split())  # Normalize whitespace
     
     def _process_link(self, element) -> str:
         """Process an anchor tag."""
@@ -269,18 +287,19 @@ class HTMLToMarkdownConverter:
     
     def _process_list(self, element, ordered: bool = False) -> str:
         """Process ul/ol list."""
-        result = ""
+        parts = []
         counter = 1
-        
+
         for li in element.find_all('li', recursive=False):
             content = self._process_children(li).strip()
             if ordered:
-                result += f"{counter}. {content}\n"
+                parts.append(f"{counter}. {content}\n")
                 counter += 1
             else:
-                result += f"- {content}\n"
-        
-        return result + "\n"
+                parts.append(f"- {content}\n")
+
+        parts.append("\n")
+        return "".join(parts)
     
     def _process_table(self, element) -> str:
         """Process table element - skip layout tables."""
@@ -368,7 +387,7 @@ class ContentFilter:
             return ""
         
         try:
-            soup = BeautifulSoup(html, 'html.parser')
+            soup = BeautifulSoup(html, _BS4_PARSER)
             
             # Remove navigation, ads, etc.
             self._remove_navigation_elements(soup)

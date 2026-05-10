@@ -41,7 +41,7 @@ Deploy to Cloud Run with mesh enabled, peering with local node
 #>
 
 param(
-    [ValidateSet("local", "cloudrun", "mesh")]
+    [ValidateSet("local", "cloudrun", "mesh", "dockerhub")]
     [string]$Target = "local",
 
     [string]$Tag = "latest",
@@ -50,7 +50,9 @@ param(
 
     [string]$MeshSecret = "",
 
-    [string]$CloudMeshPeer = ""
+    [string]$CloudMeshPeer = "",
+
+    [string]$DockerHubRepo = "deepbluedynamics/grubcrawler"
 )
 
 # Configuration — matches grub-site / gnosis-ocr pattern
@@ -88,6 +90,8 @@ Write-Host "==> Building Docker image..." -ForegroundColor Yellow
 
 if ($Target -eq "cloudrun") {
     $FullImageName = "${ImageName}:${Tag}"
+} elseif ($Target -eq "dockerhub") {
+    $FullImageName = "${DockerHubRepo}:${Tag}"
 } else {
     $FullImageName = "${ServiceName}:${Tag}"
 }
@@ -280,6 +284,59 @@ switch ($Target) {
         }
         catch {
             Write-Error "Failed to deploy to Cloud Run: $_"
+            exit 1
+        }
+    }
+
+    "dockerhub" {
+        Write-Host "==> Pushing image to Docker Hub: $FullImageName" -ForegroundColor Yellow
+
+        # Verify Docker Hub login
+        $dockerInfo = docker info 2>$null | Out-String
+        if ($dockerInfo -notmatch "Username:") {
+            Write-Host "==> Not logged into Docker Hub — running 'docker login'..." -ForegroundColor Yellow
+            docker login
+            if ($LASTEXITCODE -ne 0) {
+                Write-Error "docker login failed"
+                exit 1
+            }
+        } else {
+            $username = ($dockerInfo | Select-String -Pattern "Username:\s*(.+)").Matches.Groups[1].Value.Trim()
+            Write-Host "==> Logged in as: $username" -ForegroundColor Green
+        }
+
+        # Also tag with a date stamp so old releases stay reachable
+        $DateTag = Get-Date -Format "yyyyMMdd-HHmm"
+        $DatedImage = "${DockerHubRepo}:${DateTag}"
+
+        try {
+            docker tag $FullImageName $DatedImage
+            if ($LASTEXITCODE -ne 0) {
+                Write-Error "Failed to tag image with date stamp"
+                exit 1
+            }
+            Write-Host "==> Tagged: $DatedImage" -ForegroundColor Green
+
+            docker push $FullImageName
+            if ($LASTEXITCODE -ne 0) {
+                Write-Error "docker push $FullImageName failed"
+                exit 1
+            }
+
+            docker push $DatedImage
+            if ($LASTEXITCODE -ne 0) {
+                Write-Error "docker push $DatedImage failed"
+                exit 1
+            }
+
+            Write-Host ""
+            Write-Host "==> Pushed to Docker Hub" -ForegroundColor Green
+            Write-Host "    docker pull $FullImageName" -ForegroundColor Cyan
+            Write-Host "    docker pull $DatedImage" -ForegroundColor Cyan
+            Write-Host "    https://hub.docker.com/r/${DockerHubRepo}" -ForegroundColor Cyan
+        }
+        catch {
+            Write-Error "Failed to push to Docker Hub: $_"
             exit 1
         }
     }

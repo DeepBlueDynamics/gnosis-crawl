@@ -74,17 +74,49 @@ async def warmup_via_homepage(
         return False
 
 
+async def _dismiss_google_consent(page, timeout_ms: int = 3000) -> bool:
+    """Dismiss Google's "Before you continue" cookie consent popup if present.
+
+    Triggered for EU IPs (and sometimes routed traffic). Without dismissing,
+    the search results page is hidden behind the consent overlay and link
+    selectors return empty. Returns True if a consent button was clicked.
+    """
+    # Google uses several selectors across regions/A/B variants. Try the most
+    # common ones — short timeouts so we don't block when there is no popup.
+    selectors = [
+        'button[aria-label="Accept all"]',
+        'button[aria-label="Reject all"]',
+        'button:has-text("I agree")',
+        'button:has-text("Accept all")',
+        'button:has-text("Reject all")',
+        '#L2AGLb',  # historical "I agree" id
+        'form[action*="consent"] button',
+    ]
+    for sel in selectors:
+        try:
+            btn = await page.wait_for_selector(sel, timeout=timeout_ms, state="visible")
+            if btn:
+                await btn.click()
+                logger.debug(f"Dismissed Google consent via selector: {sel}")
+                # Give the page a moment to remove the overlay
+                await asyncio.sleep(0.5)
+                return True
+        except Exception:
+            continue
+    return False
+
+
 async def warmup_via_google(
     page,
     target_url: str,
     search_query: str,
     timeout_ms: int = 12000,
 ) -> bool:
-    """Navigate to Google, search for target, click through if found.
+    """Navigate to Google, search for target, click the main organic result.
 
-    Returns True if warm-up succeeded (clicked through to target domain), False if
-    skipped/failed. Falls back gracefully -- caller should proceed
-    with direct navigation on failure.
+    Returns True if warm-up succeeded (clicked through to target domain),
+    False otherwise. Falls back gracefully — the caller should proceed with
+    direct navigation on failure.
     """
     try:
         encoded_query = urllib.parse.quote(search_query)
@@ -93,30 +125,60 @@ async def warmup_via_google(
         await page.goto(google_url, timeout=timeout_ms, wait_until="domcontentloaded")
         await asyncio.sleep(random.uniform(1.0, 2.5))
 
-        # Extract domain from target URL for matching
+        # EU IPs and certain routes get a full-page cookie consent wall — dismiss
+        # before trying to read results, otherwise selectors return empty.
+        await _dismiss_google_consent(page, timeout_ms=2500)
+
+        # Extract domain from target URL
         domain_match = re.search(r"//([^/]+)", target_url)
         if not domain_match:
             return False
         domain = domain_match.group(1).replace("www.", "")
 
-        # Google wraps result hrefs as /url?q=https://domain/... — match both forms
-        links = await page.query_selector_all(f'a[href*="{domain}"]')
+        # Prefer the canonical organic-result anchor: a div that contains the
+        # `<h3>` headline. Google's main results wrap the headline in an anchor;
+        # picking that anchor is far more reliable than `links[0]` which can hit
+        # translate widgets, sitelinks, hidden href-prefetches, or footer links.
+        target = None
+        try:
+            # Visible anchor whose href contains the domain AND wraps an h3.
+            # Playwright supports `:has()` even though native CSS does not.
+            organic = await page.query_selector_all(f'a[href*="{domain}"]:has(h3)')
+            for a in organic:
+                if await a.is_visible():
+                    target = a
+                    break
+        except Exception:
+            target = None
 
-        if links:
-            await links[0].click()
+        # Fallback: visible href anchor that is not nofollow/translate/cache.
+        if target is None:
             try:
-                await page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+                anchors = await page.query_selector_all(f'a[href*="{domain}"]')
+                for a in anchors:
+                    href = (await a.get_attribute("href")) or ""
+                    if any(skip in href for skip in ("translate.google", "/search?", "webcache", "&prmd=", "/preferences", "/url?sa=X")):
+                        continue
+                    if await a.is_visible():
+                        target = a
+                        break
             except Exception:
-                pass
-            # Verify we actually landed on the target domain, not a Google redirect.
-            # Check hostname only — domain can appear in query strings of Google redirects.
-            current = page.url
-            current_host = urlparse(current).netloc.replace("www.", "")
-            if domain in current_host:
-                return True
-            logger.debug(f"Warmup click landed on {current!r}, not target domain — will navigate directly with Google context")
+                target = None
+
+        if target is None:
             return False
 
+        await target.click()
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+        except Exception:
+            pass
+        # Verify we actually landed on the target domain (not a Google redirect).
+        # Check hostname only — the domain can appear in query strings.
+        current_host = urlparse(page.url).netloc.replace("www.", "")
+        if domain in current_host:
+            return True
+        logger.debug(f"Warmup click landed on {page.url!r}, not target domain — caller will navigate directly with Google context")
         return False
     except Exception as e:
         logger.debug(f"Warm-up navigation failed: {e}")

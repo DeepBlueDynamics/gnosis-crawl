@@ -36,7 +36,7 @@ async def get_optional_user_email(authorization: str = Header(None)) -> Optional
     """
     if settings.disable_auth:
         return None
-    
+
     if not authorization or not authorization.startswith("Bearer "):
         return None
     

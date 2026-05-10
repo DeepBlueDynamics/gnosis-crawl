@@ -6,7 +6,13 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Domains to block (analytics, tracking, anti-bot telemetry)
+# Domains to block (analytics & advertising telemetry only).
+#
+# DO NOT add anti-bot vendors (Datadome, PerimeterX, Imperva/Incapsula, Kasada,
+# Cloudflare, Akamai, queue-it). Those WAFs operate guilty-until-proven-innocent:
+# if their telemetry script can't load and submit a fingerprint, the WAF defaults
+# to a hard 403 on every subsequent request. We *want* their JS to run so the
+# spoofed-stealth fingerprint gets evaluated and a clearance cookie is issued.
 BLOCKED_DOMAINS = [
     "google-analytics.com",
     "googletagmanager.com",
@@ -15,11 +21,6 @@ BLOCKED_DOMAINS = [
     "doubleclick.net",
     "hotjar.com",
     "clarity.ms",
-    "perimeterx.net",
-    "datadome.co",
-    "imperva.com",
-    "kasada.io",
-    "queue-it.net",
     "sentry.io",
     "bugsnag.com",
     "segment.io",
@@ -75,13 +76,24 @@ try {
     };
 } catch(e) {}
 
-// AudioContext fingerprint noise
+// AudioContext fingerprint noise — STATIC per session.
+// Real hardware produces a stable audio fingerprint; using Math.random() on
+// every call makes the fingerprint drift between samples taken milliseconds
+// apart, which Datadome/Cloudflare Turnstile flag as active spoofing.
+// We generate the noise vector once and reuse it for the lifetime of the page.
 try {
     const origGetFloatFreqData = AnalyserNode.prototype.getFloatFrequencyData;
+    let _noiseVec = null;
     AnalyserNode.prototype.getFloatFrequencyData = function(array) {
         origGetFloatFreqData.call(this, array);
+        if (_noiseVec === null || _noiseVec.length !== array.length) {
+            _noiseVec = new Float32Array(array.length);
+            for (let i = 0; i < array.length; i++) {
+                _noiseVec[i] = (Math.random() - 0.5) * 0.001;
+            }
+        }
         for (let i = 0; i < array.length; i++) {
-            array[i] += (Math.random() - 0.5) * 0.001;
+            array[i] += _noiseVec[i];
         }
     };
 } catch(e) {}
