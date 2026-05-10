@@ -27,6 +27,7 @@ from app.agent.types import (
     StepResult,
     StepTrace,
     StopReason,
+    ToolCall,
     ToolCalls,
     ToolResult,
 )
@@ -37,7 +38,7 @@ from app.agent.ghost import (
     should_trigger_ghost,
     run_ghost_protocol,
     create_ghost_provider,
-    GhostResult,
+    GhostDiagnosis,
 )
 from app.observability.events import (
     EventBus,
@@ -305,9 +306,15 @@ class AgentEngine:
         ctx: RunContext,
         bus: EventBus,
     ) -> Optional[ToolResult]:
-        """Attempt Ghost Protocol vision extraction for a blocked crawl result.
+        """Run Ghost Protocol diagnosis on a blocked crawl result.
 
-        Returns a replacement ToolResult on success, or None to keep the original.
+        Screenshots what the browser actually rendered, sends it to a vision
+        LLM to identify the block type (Cloudflare, CAPTCHA, login wall, etc.),
+        and returns a ToolResult carrying the diagnosis so the agent can decide
+        what to try next (warmup, cookie injection, escalation, etc.).
+
+        Returns a replacement ToolResult with ghost_diagnosis payload, or None
+        if Ghost Protocol is disabled / no URL / screenshot failed.
         """
         from app.config import settings
 
@@ -325,7 +332,6 @@ class AgentEngine:
         ):
             return None
 
-        # Extract URL from the tool call args or result
         url = call.args.get("url") or (original_result.payload or {}).get("url")
         if not url:
             return None
@@ -335,61 +341,63 @@ class AgentEngine:
         bus.emit(ToolDispatchEvent(
             run_id=ctx.run_id,
             step_id=ctx.step,
-            tool_call=ToolCall(id=f"{call.id}_ghost", name="ghost_extract", args={"url": url}),
+            tool_call=ToolCall(id=f"{call.id}_ghost", name="ghost_diagnose", args={"url": url}),
         ))
 
         try:
             provider = create_ghost_provider()
-            ghost_result = await run_ghost_protocol(
+            diagnosis: GhostDiagnosis = await run_ghost_protocol(
                 url,
                 provider=provider,
                 max_width=settings.agent_ghost_max_image_width,
                 timeout=30,
             )
 
-            if ghost_result.success:
-                # Merge ghost content into a new ToolResult
-                ghost_payload = dict(original_result.payload or {})
-                ghost_payload["markdown"] = ghost_result.content
-                ghost_payload["content"] = ghost_result.content
-                ghost_payload["render_mode"] = "ghost"
-                ghost_payload["ghost_capture_ms"] = ghost_result.capture_ms
-                ghost_payload["ghost_extraction_ms"] = ghost_result.extraction_ms
-                ghost_payload["ghost_provider"] = ghost_result.provider
-                ghost_payload["content_quality"] = "sufficient"
-                ghost_payload["blocked"] = False  # unblock — we got content
-
-                replacement = ToolResult(
-                    tool_call_id=original_result.tool_call_id,
-                    ok=True,
-                    payload=ghost_payload,
-                    duration_ms=original_result.duration_ms + ghost_result.total_ms,
-                )
-
-                bus.emit(ToolResultEvent(
-                    run_id=ctx.run_id,
-                    step_id=ctx.step,
-                    tool_result=replacement,
-                ))
-
-                ctx.trace.append(StepTrace(
-                    run_id=ctx.run_id,
-                    step_id=ctx.step,
-                    state=RunState.EXECUTE_TOOL,
-                    tool_name="ghost_extract",
-                    duration_ms=ghost_result.total_ms,
-                    status="ok",
-                ))
-
-                logger.info(
-                    "Ghost Protocol succeeded for %s: %d chars extracted",
-                    url, len(ghost_result.content),
-                )
-                return replacement
-
-            else:
-                logger.warning("Ghost Protocol failed for %s: %s", url, ghost_result.error)
+            if not diagnosis.success:
+                logger.warning("Ghost Protocol failed for %s: %s", url, diagnosis.error)
                 return None
+
+            # Build a replacement ToolResult that carries the diagnosis.
+            # The agent sees this as a failed crawl with structured context about
+            # what's blocking and what to try next.
+            diag_payload = dict(original_result.payload or {})
+            diag_payload["ghost_diagnosis"] = True
+            diag_payload["block_type"] = diagnosis.block_type
+            diag_payload["description"] = diagnosis.description
+            diag_payload["recommended_action"] = diagnosis.action
+            diag_payload["action_reason"] = diagnosis.action_reason
+            diag_payload["ghost_provider"] = diagnosis.provider
+            diag_payload["ghost_total_ms"] = diagnosis.total_ms
+            diag_payload["blocked"] = True
+            diag_payload["content_quality"] = "blocked"
+
+            replacement = ToolResult(
+                tool_call_id=original_result.tool_call_id,
+                ok=False,  # still a failure — but now a diagnosed one
+                payload=diag_payload,
+                duration_ms=(original_result.duration_ms or 0) + diagnosis.total_ms,
+            )
+
+            bus.emit(ToolResultEvent(
+                run_id=ctx.run_id,
+                step_id=ctx.step,
+                tool_result=replacement,
+            ))
+
+            ctx.trace.append(StepTrace(
+                run_id=ctx.run_id,
+                step_id=ctx.step,
+                state=RunState.EXECUTE_TOOL,
+                tool_name="ghost_diagnose",
+                duration_ms=diagnosis.total_ms,
+                status="ok",
+            ))
+
+            logger.info(
+                "Ghost Protocol diagnosed %s: block_type=%s action=%s",
+                url, diagnosis.block_type, diagnosis.action,
+            )
+            return replacement
 
         except Exception as exc:
             logger.error("Ghost Protocol error for %s: %s", url, exc, exc_info=True)

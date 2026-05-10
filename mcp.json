@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "grubcrawler": {
+      "url": "http://localhost:6792/mcp",
+      "transport": "streamable-http",
+      "description": "grubcrawler — stealth web crawler with Camoufox bot-bypass. Tools: grub_crawl, grub_screenshot, grub_diagnose. Docs: https://grubcrawler.dev"
+    }
+  }
+}

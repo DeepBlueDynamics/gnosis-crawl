@@ -162,7 +162,7 @@ async def agent_status(
 
 
 # ---------------------------------------------------------------------------
-# POST /api/agent/ghost — Ghost Protocol: screenshot + vision extract
+# POST /api/agent/ghost — Ghost Protocol: screenshot + diagnose block
 # ---------------------------------------------------------------------------
 
 def _require_ghost_enabled():
@@ -179,11 +179,13 @@ async def agent_ghost(
     request: GhostExtractRequest,
     x_client_timeout: Optional[str] = Header(None, alias="X-Client-Timeout"),
 ):
-    """Ghost Protocol: screenshot a URL and extract content via vision AI.
+    """Ghost Protocol: screenshot a blocked URL and diagnose what's blocking it.
 
-    Bypasses DOM-based anti-bot detection by reading rendered pixels instead.
+    Takes a screenshot of what the browser actually rendered (the block page,
+    challenge, cookie wall, etc.) and uses vision AI to identify the block
+    type and recommend the next action to take.
     """
-    from app.agent.ghost import run_ghost_protocol, create_ghost_provider, GHOST_EXTRACTION_PROMPT
+    from app.agent.ghost import run_ghost_protocol, create_ghost_provider
 
     try:
         provider = create_ghost_provider()
@@ -196,7 +198,6 @@ async def agent_ghost(
 
     proxy = resolve_proxy(getattr(request, 'proxy', None))
 
-    # Respect client timeout budget: cap the ghost timeout to the remaining client budget
     effective_timeout = request.timeout
     if x_client_timeout and x_client_timeout.isdigit():
         client_budget = int(x_client_timeout)
@@ -209,21 +210,19 @@ async def agent_ghost(
         provider=provider,
         max_width=settings.agent_ghost_max_image_width,
         timeout=effective_timeout,
-        prompt=request.prompt or GHOST_EXTRACTION_PROMPT,
         proxy=proxy,
     )
 
     return GhostExtractResponse(
         success=result.success,
         url=result.url,
-        content=result.content if result.success else None,
-        render_mode=result.render_mode,
-        block_signal=result.block_signal,
-        block_reason=result.block_reason,
+        block_type=result.block_type,
+        description=result.description,
+        action=result.action,
+        action_reason=result.action_reason,
         capture_ms=result.capture_ms,
-        extraction_ms=result.extraction_ms,
+        diagnosis_ms=result.diagnosis_ms,
         total_ms=result.total_ms,
         provider=result.provider,
-        blocked_content=result.blocked_content,
         error=result.error,
     )

@@ -166,6 +166,8 @@ _ENDPOINT_HINT = {
         "batch":    "POST /api/batch          {urls: [...]}",
         "jobs":     "POST /api/jobs/crawl     {url, session_id?}",
         "agent":    "POST /api/agent/run      {task, config?}",
+        "ghost":    "POST /api/agent/ghost    {url} — diagnose blocked URL",
+        "mcp":      "GET  /mcp               MCP server (streamable-http transport)",
         "tools":    "GET  /tools              list available AHP tools",
         "view":     "GET  /view?url=...       render page as HTML",
         "download": "GET  /download?url=...   fetch binary/file",
@@ -246,6 +248,16 @@ app.add_middleware(
 app.include_router(agent_router)  # /api/agent/* — must precede the /api catch-all
 app.include_router(job_router)    # /api/jobs/*  — must precede the /api catch-all
 app.include_router(router, prefix="/api")  # includes /{path:path} catch-all last
+
+# MCP server — expose grub tools to Claude Code and other MCP clients
+# Mounted before the catch-all so /mcp/* routes are handled correctly.
+# Connect via: { "url": "http://localhost:6792/mcp", "transport": "streamable-http" }
+try:
+    from app.mcp_server import mcp as _mcp_server
+    app.mount("/mcp", _mcp_server.streamable_http_app())
+    logger.info("MCP server mounted at /mcp")
+except Exception as _mcp_err:
+    logger.warning("MCP server not available (install mcp package to enable): %s", _mcp_err)
 
 # Mesh routes (conditional)
 if settings.mesh_enabled:

@@ -1,15 +1,18 @@
-"""Ghost Protocol: vision-based fallback for anti-bot blocked pages.
+"""Ghost Protocol: diagnostic mode for anti-bot blocked pages.
 
-When a crawl result signals an anti-bot block (Cloudflare challenge, CAPTCHA,
-empty SPA shell), the Ghost Protocol:
+When a crawl returns blocked or thin content, Ghost Protocol:
 
-1. Takes a full-page screenshot via Playwright
-2. Sends the image to a vision-capable LLM (Claude or GPT-4o)
-3. Extracts content from the rendered pixels
-4. Returns extracted text with render_mode="ghost" in the result
+1. Takes a screenshot of exactly what the browser rendered
+2. Sends the screenshot to a vision LLM
+3. LLM diagnoses what's blocking (Cloudflare, CAPTCHA, login wall, etc.)
+4. Returns a structured diagnosis with a recommended next action
 
-This bypasses DOM-based anti-bot detection entirely because the content
-is read from the visual rendering, not the DOM.
+The caller (engine.py) acts on the diagnosis — retry with warmup, tell the
+agent to inject cookies, or mark the URL as unsolvable.
+
+Ghost Protocol is diagnostic, not extractive. The screenshot shows the BLOCK
+PAGE (challenge, wall, error), not the target content. The point is to
+identify the block type so the system can route around it.
 
 Requires AGENT_GHOST_ENABLED=true.
 Auto-triggers on detected blocks when AGENT_GHOST_AUTO_TRIGGER=true.
@@ -17,18 +20,17 @@ Auto-triggers on detected blocks when AGENT_GHOST_AUTO_TRIGGER=true.
 
 from __future__ import annotations
 
-import base64
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Block detection
+# Block detection (used before triggering Ghost Protocol)
 # ---------------------------------------------------------------------------
 
 class BlockSignal(str, Enum):
@@ -54,8 +56,7 @@ class BlockDetection:
     confidence: float = 0.0
 
 
-# Phrases that indicate anti-bot blocking, ordered by specificity
-_BLOCK_PATTERNS: List[tuple[str, BlockSignal, float]] = [
+_BLOCK_PATTERNS: List[tuple] = [
     ("cloudflare", BlockSignal.CLOUDFLARE, 0.95),
     ("verify your session", BlockSignal.SESSION_VERIFY, 0.9),
     ("captcha", BlockSignal.CAPTCHA, 0.95),
@@ -70,7 +71,6 @@ _BLOCK_PATTERNS: List[tuple[str, BlockSignal, float]] = [
     ("enable javascript and cookies", BlockSignal.BOT_CHALLENGE, 0.8),
 ]
 
-# Minimum content thresholds that suggest an empty SPA shell
 _EMPTY_SHELL_CHAR_THRESHOLD = 200
 _EMPTY_SHELL_WORD_THRESHOLD = 30
 
@@ -84,14 +84,9 @@ def detect_block(
     body_word_count: int = 0,
     content_quality: str = "",
 ) -> BlockDetection:
-    """Analyze crawl output for anti-bot block signals.
-
-    Returns a BlockDetection with blocked=True if the page appears to be
-    an anti-bot challenge, CAPTCHA, or empty SPA shell.
-    """
+    """Analyze crawl output for anti-bot block signals."""
     combined = f"{html or ''}\n{markdown or ''}".lower()
 
-    # Pattern matching
     for phrase, signal, confidence in _BLOCK_PATTERNS:
         if phrase in combined:
             return BlockDetection(
@@ -102,35 +97,18 @@ def detect_block(
                 confidence=confidence,
             )
 
-    # HTTP status codes that indicate blocking
     if status_code == 403:
-        return BlockDetection(
-            blocked=True,
-            signal=BlockSignal.HTTP_403,
-            reason="HTTP 403 Forbidden",
-            confidence=0.7,
-        )
+        return BlockDetection(blocked=True, signal=BlockSignal.HTTP_403, reason="HTTP 403 Forbidden", confidence=0.7)
     if status_code == 429:
-        return BlockDetection(
-            blocked=True,
-            signal=BlockSignal.HTTP_429,
-            reason="HTTP 429 Too Many Requests",
-            confidence=0.8,
-        )
+        return BlockDetection(blocked=True, signal=BlockSignal.HTTP_429, reason="HTTP 429 Too Many Requests", confidence=0.8)
     if status_code == 503:
-        return BlockDetection(
-            blocked=True,
-            signal=BlockSignal.HTTP_503,
-            reason="HTTP 503 Service Unavailable (common anti-bot response)",
-            confidence=0.75,
-        )
+        return BlockDetection(blocked=True, signal=BlockSignal.HTTP_503, reason="HTTP 503 (common anti-bot response)", confidence=0.75)
 
-    # Empty SPA shell detection
     if (
         body_char_count < _EMPTY_SHELL_CHAR_THRESHOLD
         and body_word_count < _EMPTY_SHELL_WORD_THRESHOLD
-        and html  # has HTML but very little text content
-        and len(html) > 500  # the HTML itself is non-trivial (JS-heavy shell)
+        and html
+        and len(html) > 500
     ):
         return BlockDetection(
             blocked=True,
@@ -139,7 +117,6 @@ def detect_block(
             confidence=0.6,
         )
 
-    # Content quality flag from crawler
     if content_quality == "blocked":
         return BlockDetection(
             blocked=True,
@@ -164,7 +141,6 @@ def should_trigger_ghost(
         return False
     if not auto_trigger:
         return False
-    # Don't ghost on simple access denied (likely auth issue, not anti-bot)
     if detection.signal == BlockSignal.ACCESS_DENIED and detection.confidence < 0.85:
         return False
     return True
@@ -180,13 +156,9 @@ class GhostCapture:
     success: bool = False
     image_bytes: bytes = b""
     content_type: str = "image/png"
-    width: int = 0
-    height: int = 0
     url: str = ""
     capture_ms: int = 0
     error: Optional[str] = None
-    html: str = ""           # raw HTML from crawl
-    dom_markdown: str = ""   # markdown generated from DOM
 
 
 async def capture_screenshot(
@@ -197,208 +169,184 @@ async def capture_screenshot(
     javascript: bool = True,
     proxy=None,
 ) -> GhostCapture:
-    """Take a full-page screenshot of a URL using Playwright.
+    """Take a screenshot of the URL as the browser currently renders it.
 
-    This creates a fresh browser context to avoid any cached challenge state,
-    and captures the page as it appears visually (including any anti-bot
-    challenge pages, CAPTCHAs, etc.).
-
-    Args:
-        url: The URL to screenshot.
-        max_width: Maximum viewport width.
-        timeout: Navigation timeout in seconds.
-        javascript: Whether to enable JavaScript.
-
-    Returns:
-        GhostCapture with image bytes on success.
+    The screenshot shows whatever the browser got — including block pages,
+    CAPTCHAs, cookie walls, etc. That's the diagnostic data we need.
     """
     start = time.monotonic()
-
     try:
         from app.browser import get_browser_engine
         browser = await get_browser_engine()
 
-        # Use the existing crawl_with_context which handles retries and cleanup
         html, page_info, screenshot_data = await browser.crawl_with_context(
             url=url,
             javascript_enabled=javascript,
             timeout=timeout * 1000,
             take_screenshot=True,
-            wait_until="networkidle",  # wait for full render
-            wait_after_load_ms=2000,  # extra wait for challenge pages
+            wait_until="domcontentloaded",
+            wait_after_load_ms=1500,
             proxy=proxy,
         )
-
-        # Generate markdown from DOM (primary extraction method)
-        dom_markdown = ""
-        try:
-            from app.markdown import MarkdownGenerator
-            md_gen = MarkdownGenerator()
-            md_result = md_gen.generate_markdown(html, url)
-            dom_markdown = md_result.clean_markdown or md_result.raw_markdown or ""
-        except Exception as md_err:
-            logger.debug("DOM markdown generation failed: %s", md_err)
 
         capture_ms = int((time.monotonic() - start) * 1000)
 
         if screenshot_data is None:
-            return GhostCapture(
-                success=False,
-                url=url,
-                capture_ms=capture_ms,
-                error="Screenshot capture returned None",
-            )
+            return GhostCapture(success=False, url=url, capture_ms=capture_ms, error="Screenshot returned None")
 
-        # Handle segmented screenshots — for ghost we want the first segment
-        # (the visible viewport) which usually contains the content
-        if isinstance(screenshot_data, list):
-            image_bytes = screenshot_data[0]
-        else:
-            image_bytes = screenshot_data
-
-        return GhostCapture(
-            success=True,
-            image_bytes=image_bytes,
-            url=url,
-            capture_ms=capture_ms,
-            html=html,
-            dom_markdown=dom_markdown,
-        )
+        image_bytes = screenshot_data[0] if isinstance(screenshot_data, list) else screenshot_data
+        return GhostCapture(success=True, image_bytes=image_bytes, url=url, capture_ms=capture_ms)
 
     except Exception as exc:
         capture_ms = int((time.monotonic() - start) * 1000)
         logger.error("Ghost screenshot capture failed for %s: %s", url, exc, exc_info=True)
-        return GhostCapture(
-            success=False,
-            url=url,
-            capture_ms=capture_ms,
-            error=str(exc),
-        )
+        return GhostCapture(success=False, url=url, capture_ms=capture_ms, error=str(exc))
 
 
 # ---------------------------------------------------------------------------
-# Vision extraction
+# Vision diagnosis
 # ---------------------------------------------------------------------------
 
-GHOST_EXTRACTION_PROMPT = """You are evaluating and extracting content from a screenshot of a web page.
+GHOST_DIAGNOSIS_PROMPT = """You are a web crawler diagnostic agent. The crawler attempted to fetch a URL but returned empty or blocked content. You are looking at a screenshot of exactly what the browser rendered.
 
-STEP 1 — CLASSIFY THE PAGE:
-Look at the screenshot and determine what type of page this is. Output ONE of these on the FIRST line:
+Diagnose what is blocking the crawler and recommend what should be tried next.
 
-PAGE_TYPE: BLOCKED — if you see any anti-bot challenge, Cloudflare "Just a moment" / "Checking your browser" screen, CAPTCHA, "Access Denied", "Verify you are human", security check, rate limit page, or any other WAF/bot-detection page.
-PAGE_TYPE: CONTENT — if you see actual page content (articles, reviews, product info, data).
-PAGE_TYPE: ERROR — if you see a 404, 500, or other error page.
-PAGE_TYPE: EMPTY — if the page is blank or has only navigation/headers with no substantive content.
+Respond in EXACTLY this format (no extra text before or after):
 
-STEP 2 — EXTRACT CONTENT:
-If PAGE_TYPE is CONTENT:
-- Extract ALL visible text faithfully. Preserve structure with headings, lists, paragraphs.
-- Reproduce tables in markdown format. Note images as [Image: description].
-- Do NOT add commentary — just extract what you see.
+BLOCK_TYPE: <one of: CLOUDFLARE | AKAMAI | CAPTCHA | LOGIN_WALL | COOKIE_CONSENT | JS_GATE | RATE_LIMITED | ACCESS_DENIED | ERROR_PAGE | EMPTY | UNKNOWN>
+DESCRIPTION: <one sentence — exactly what you see on screen>
+ACTION: <one of: WARMUP | ACCEPT_COOKIES | INJECT_COOKIES | RETRY_JS | LOGIN_REQUIRED | UNSOLVABLE>
+ACTION_REASON: <one sentence — why this action would help>
 
-If PAGE_TYPE is BLOCKED, ERROR, or EMPTY:
-- Briefly describe what you see on the page (1-2 sentences).
-- Do NOT fabricate content that isn't visible."""
+BLOCK_TYPE meanings:
+- CLOUDFLARE: Cloudflare "Just a moment" / "Checking your browser" challenge
+- AKAMAI: Akamai Bot Manager / "Access Denied" screen
+- CAPTCHA: Visible CAPTCHA (reCAPTCHA, hCAPTCHA, image puzzle)
+- LOGIN_WALL: Login or signup page blocking access to content
+- COOKIE_CONSENT: Cookie consent/GDPR popup blocking the page
+- JS_GATE: Blank page that requires JavaScript to render content
+- RATE_LIMITED: 429 or explicit rate limit message
+- ACCESS_DENIED: Generic 403/access denied without specific anti-bot branding
+- ERROR_PAGE: 404, 500, or other server error page
+- EMPTY: Page rendered but shows actual content (crawl failure was transient or the content was sparse)
+- UNKNOWN: Cannot identify the block type
+
+ACTION meanings:
+- WARMUP: Visit the site's homepage first (or use Google click-through) to establish a real session cookie before retrying
+- ACCEPT_COOKIES: Dismiss cookie consent popup — retry with JavaScript enabled
+- INJECT_COOKIES: User must provide real browser session cookies (anti-bot or login cookie required)
+- RETRY_JS: Enable JavaScript and retry — page needs JS to render
+- LOGIN_REQUIRED: Page requires authenticated user session — cannot crawl without credentials
+- UNSOLVABLE: Cannot bypass programmatically (sophisticated CAPTCHA, IP ban, paywalled behind login)"""
 
 
 @dataclass
-class GhostExtraction:
-    """Result of vision-based content extraction."""
+class GhostDiagnosis:
+    """Structured diagnosis from Ghost Protocol."""
     success: bool = False
-    content: str = ""
-    render_mode: str = "ghost"
-    extraction_ms: int = 0
+    url: str = ""
+    block_type: str = "UNKNOWN"
+    description: str = ""
+    action: str = "UNSOLVABLE"
+    action_reason: str = ""
+    capture_ms: int = 0
+    diagnosis_ms: int = 0
+    total_ms: int = 0
     provider: str = ""
-    blocked_content: bool = False  # True if vision shows the page IS a challenge
     error: Optional[str] = None
 
 
-async def extract_via_vision(
+def _parse_diagnosis(text: str) -> Tuple[str, str, str, str]:
+    """Parse the 4-field structured response from the vision LLM."""
+    block_type = "UNKNOWN"
+    description = ""
+    action = "UNSOLVABLE"
+    action_reason = ""
+
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if line.upper().startswith("BLOCK_TYPE:"):
+            block_type = line.split(":", 1)[1].strip().upper()
+        elif line.upper().startswith("DESCRIPTION:"):
+            description = line.split(":", 1)[1].strip()
+        elif line.upper().startswith("ACTION:") and not line.upper().startswith("ACTION_REASON:"):
+            action = line.split(":", 1)[1].strip().upper()
+        elif line.upper().startswith("ACTION_REASON:"):
+            action_reason = line.split(":", 1)[1].strip()
+
+    # Normalize to valid enums
+    valid_block_types = {"CLOUDFLARE", "AKAMAI", "CAPTCHA", "LOGIN_WALL", "COOKIE_CONSENT", "JS_GATE", "RATE_LIMITED", "ACCESS_DENIED", "ERROR_PAGE", "EMPTY", "UNKNOWN"}
+    valid_actions = {"WARMUP", "ACCEPT_COOKIES", "INJECT_COOKIES", "RETRY_JS", "LOGIN_REQUIRED", "UNSOLVABLE"}
+    if block_type not in valid_block_types:
+        block_type = "UNKNOWN"
+    if action not in valid_actions:
+        action = "UNSOLVABLE"
+
+    return block_type, description, action, action_reason
+
+
+async def diagnose_via_vision(
     capture: GhostCapture,
     *,
     provider: Optional[Any] = None,
-    prompt: str = GHOST_EXTRACTION_PROMPT,
-) -> GhostExtraction:
-    """Send a screenshot to a vision-capable LLM and extract text content.
-
-    Args:
-        capture: The GhostCapture containing screenshot bytes.
-        provider: An LLMAdapter instance with vision() support.
-        prompt: The extraction prompt.
-
-    Returns:
-        GhostExtraction with extracted content.
-    """
+) -> GhostDiagnosis:
+    """Send a screenshot to a vision LLM and get a structured block diagnosis."""
     if not capture.success or not capture.image_bytes:
-        return GhostExtraction(
+        return GhostDiagnosis(
             success=False,
-            error=capture.error or "No screenshot data available",
+            url=capture.url,
+            error=capture.error or "No screenshot data",
         )
 
     if provider is None:
-        return GhostExtraction(
-            success=False,
-            error="No vision provider configured",
-        )
+        return GhostDiagnosis(success=False, url=capture.url, error="No vision provider configured")
 
     start = time.monotonic()
-
     try:
-        extracted_text = await provider.vision(
+        raw_text = await provider.vision(
             capture.image_bytes,
-            prompt,
-            detail="high",  # high detail for text extraction
+            GHOST_DIAGNOSIS_PROMPT,
+            detail="low",  # we want block-type classification, not fine text
+        )
+        diagnosis_ms = int((time.monotonic() - start) * 1000)
+
+        block_type, description, action, action_reason = _parse_diagnosis(raw_text)
+        provider_name = provider.__class__.__name__
+
+        logger.info(
+            "Ghost diagnosis for %s: block_type=%s action=%s (%dms)",
+            capture.url, block_type, action, diagnosis_ms,
         )
 
-        extraction_ms = int((time.monotonic() - start) * 1000)
-
-        # Check if the model classified the page as blocked via PAGE_TYPE prefix
-        content_lower = extracted_text.lower()
-        first_line = extracted_text.strip().split('\n')[0].strip().lower()
-
-        # Structured classification (from updated prompt)
-        blocked_by_classification = any(tag in first_line for tag in [
-            "page_type: blocked", "page_type:blocked",
-            "page_type: error", "page_type:error",
-            "page_type: empty", "page_type:empty",
-        ])
-
-        # Fallback pattern matching (if model doesn't follow the format exactly)
-        blocked_indicators = [
-            "anti-bot", "captcha", "recaptcha", "hcaptcha",
-            "challenge", "verify you are human", "are you human",
-            "access denied", "please complete the security check",
-            "just a moment", "checking your browser",
-            "cloudflare", "ray id", "security check",
-            "attention required", "enable javascript",
-        ]
-        blocked_by_patterns = any(ind in content_lower for ind in blocked_indicators)
-
-        blocked_content = blocked_by_classification or blocked_by_patterns
-
-        return GhostExtraction(
+        return GhostDiagnosis(
             success=True,
-            content=extracted_text,
-            render_mode="ghost",
-            extraction_ms=extraction_ms,
-            provider=provider.__class__.__name__,
-            blocked_content=blocked_content,
+            url=capture.url,
+            block_type=block_type,
+            description=description,
+            action=action,
+            action_reason=action_reason,
+            capture_ms=capture.capture_ms,
+            diagnosis_ms=diagnosis_ms,
+            total_ms=capture.capture_ms + diagnosis_ms,
+            provider=provider_name,
         )
 
     except NotImplementedError:
-        extraction_ms = int((time.monotonic() - start) * 1000)
-        return GhostExtraction(
+        diagnosis_ms = int((time.monotonic() - start) * 1000)
+        return GhostDiagnosis(
             success=False,
-            extraction_ms=extraction_ms,
-            error=f"Provider {provider.__class__.__name__} does not support vision",
+            url=capture.url,
+            error=f"Provider does not support vision",
+            diagnosis_ms=diagnosis_ms,
         )
     except Exception as exc:
-        extraction_ms = int((time.monotonic() - start) * 1000)
-        logger.error("Ghost vision extraction failed: %s", exc, exc_info=True)
-        return GhostExtraction(
+        diagnosis_ms = int((time.monotonic() - start) * 1000)
+        logger.error("Ghost vision diagnosis failed: %s", exc, exc_info=True)
+        return GhostDiagnosis(
             success=False,
-            extraction_ms=extraction_ms,
+            url=capture.url,
             error=str(exc),
+            diagnosis_ms=diagnosis_ms,
         )
 
 
@@ -406,171 +354,54 @@ async def extract_via_vision(
 # Full Ghost Protocol pipeline
 # ---------------------------------------------------------------------------
 
-@dataclass
-class GhostResult:
-    """Complete result from the Ghost Protocol pipeline."""
-    success: bool = False
-    url: str = ""
-    content: str = ""
-    render_mode: str = "ghost"
-    block_signal: Optional[str] = None
-    block_reason: str = ""
-    capture_ms: int = 0
-    extraction_ms: int = 0
-    total_ms: int = 0
-    provider: str = ""
-    blocked_content: bool = False
-    error: Optional[str] = None
-
-
 async def run_ghost_protocol(
     url: str,
     *,
     provider: Optional[Any] = None,
     max_width: int = 1280,
     timeout: int = 30,
-    prompt: str = GHOST_EXTRACTION_PROMPT,
     block_detection: Optional[BlockDetection] = None,
     proxy=None,
-    existing_markdown: Optional[str] = None,
-) -> GhostResult:
-    """Execute the full Ghost Protocol pipeline.
+) -> GhostDiagnosis:
+    """Execute the Ghost Protocol pipeline: screenshot → diagnose → recommend.
 
-    1. Capture screenshot
-    2. Send to vision LLM
-    3. Return extracted content
+    Takes a screenshot of what the browser actually rendered (which is typically
+    a block page, challenge, or error), sends it to a vision LLM, and returns
+    a structured diagnosis with a recommended next action.
 
-    Args:
-        url: URL to ghost-extract.
-        provider: Vision-capable LLMAdapter.
-        max_width: Max viewport width.
-        timeout: Navigation timeout.
-        prompt: Vision extraction prompt.
-        block_detection: Optional pre-computed block detection result.
-
-    Returns:
-        GhostResult with extracted content or error.
+    The caller is responsible for acting on the diagnosis (retry with warmup,
+    inject cookies, inform the agent, etc.).
     """
     pipeline_start = time.monotonic()
-
     logger.info("Ghost Protocol activated for %s", url)
 
-    # Reuse existing markdown if sufficient — avoid re-navigating the same URL
-    if existing_markdown and len(existing_markdown.strip()) > 100:
-        block_check = detect_block(markdown=existing_markdown)
-        if not block_check.blocked:
-            total_ms = int((time.monotonic() - pipeline_start) * 1000)
-            logger.info(
-                "Ghost Protocol: reusing existing markdown (%d chars), skipping re-navigation",
-                len(existing_markdown),
-            )
-            return GhostResult(
-                success=True,
-                url=url,
-                content=existing_markdown,
-                total_ms=total_ms,
-                render_mode="reused",
-            )
-
-    # Step 1: Capture screenshot
-    capture = await capture_screenshot(
-        url,
-        max_width=max_width,
-        timeout=timeout,
-        proxy=proxy,
-    )
+    capture = await capture_screenshot(url, max_width=max_width, timeout=timeout, proxy=proxy)
 
     if not capture.success:
         total_ms = int((time.monotonic() - pipeline_start) * 1000)
-        return GhostResult(
+        return GhostDiagnosis(
             success=False,
             url=url,
             capture_ms=capture.capture_ms,
             total_ms=total_ms,
-            block_signal=block_detection.signal.value if block_detection and block_detection.signal else None,
-            block_reason=block_detection.reason if block_detection else "",
-            error=f"Screenshot capture failed: {capture.error}",
+            error=f"Screenshot failed: {capture.error}",
         )
 
-    # Step 1.5: Try DOM markdown first (preferred over vision)
-    if capture.dom_markdown and len(capture.dom_markdown.strip()) > 200:
-        block_check = detect_block(markdown=capture.dom_markdown)
-        if not block_check.blocked:
-            total_ms = int((time.monotonic() - pipeline_start) * 1000)
-            logger.info(
-                "Ghost Protocol: DOM markdown sufficient (%d chars), skipping vision extraction",
-                len(capture.dom_markdown),
-            )
-            return GhostResult(
-                success=True,
-                url=url,
-                content=capture.dom_markdown,
-                render_mode="ghost_dom",
-                capture_ms=capture.capture_ms,
-                total_ms=total_ms,
-                provider="dom_markdown",
-            )
-
-    # Step 2: Vision extraction
-    extraction = await extract_via_vision(
-        capture,
-        provider=provider,
-        prompt=prompt,
-    )
-
-    total_ms = int((time.monotonic() - pipeline_start) * 1000)
-
-    if not extraction.success:
-        return GhostResult(
-            success=False,
-            url=url,
-            capture_ms=capture.capture_ms,
-            extraction_ms=extraction.extraction_ms,
-            total_ms=total_ms,
-            block_signal=block_detection.signal.value if block_detection and block_detection.signal else None,
-            block_reason=block_detection.reason if block_detection else "",
-            error=f"Vision extraction failed: {extraction.error}",
-        )
-
-    logger.info(
-        "Ghost Protocol complete for %s: %d chars extracted in %dms (capture=%dms, extract=%dms)",
-        url,
-        len(extraction.content),
-        total_ms,
-        capture.capture_ms,
-        extraction.extraction_ms,
-    )
-
-    return GhostResult(
-        success=True,
-        url=url,
-        content=extraction.content,
-        render_mode="ghost",
-        block_signal=block_detection.signal.value if block_detection and block_detection.signal else None,
-        block_reason=block_detection.reason if block_detection else "",
-        capture_ms=capture.capture_ms,
-        extraction_ms=extraction.extraction_ms,
-        total_ms=total_ms,
-        provider=extraction.provider,
-        blocked_content=extraction.blocked_content,
-    )
+    diagnosis = await diagnose_via_vision(capture, provider=provider)
+    diagnosis.total_ms = int((time.monotonic() - pipeline_start) * 1000)
+    return diagnosis
 
 
 # ---------------------------------------------------------------------------
-# Vision provider factory (for ghost-specific provider override)
+# Vision provider factory
 # ---------------------------------------------------------------------------
 
 def create_ghost_provider():
-    """Create a vision-capable provider for Ghost Protocol.
-
-    Uses AGENT_GHOST_VISION_PROVIDER if set, otherwise falls back
-    to the main AGENT_PROVIDER.
-    """
+    """Create a vision-capable provider for Ghost Protocol."""
     from app.config import settings
     from app.agent.providers.base import create_provider, _pick_key, _pick_model, _pick_base_url
 
     provider_name = settings.agent_ghost_vision_provider or settings.agent_provider
-
     return create_provider(
         provider_name,
         api_key=_pick_key(settings, provider_name),

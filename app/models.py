@@ -306,24 +306,22 @@ class AgentStatusResponse(BaseModel):
 # Ghost Protocol Models
 
 class GhostExtractRequest(BaseModel):
-    """Request for Ghost Protocol vision extraction."""
+    """Request for Ghost Protocol diagnosis."""
     url: str = Field(..., min_length=1)
     timeout: int = Field(default=30, ge=5, le=120)
-    prompt: Optional[str] = None
     proxy: Optional[ProxyConfig] = None
 
 
 class GhostExtractResponse(BaseModel):
-    """Response from Ghost Protocol extraction."""
+    """Response from Ghost Protocol diagnosis."""
     success: bool
     url: str
-    content: Optional[str] = None
-    render_mode: str = "ghost"
-    block_signal: Optional[str] = None
-    block_reason: Optional[str] = None
+    block_type: str = "UNKNOWN"
+    description: Optional[str] = None
+    action: str = "UNSOLVABLE"
+    action_reason: Optional[str] = None
     capture_ms: int = 0
-    extraction_ms: int = 0
+    diagnosis_ms: int = 0
     total_ms: int = 0
     provider: Optional[str] = None
-    blocked_content: bool = False
     error: Optional[str] = None
