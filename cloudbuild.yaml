@@ -1,0 +1,74 @@
+# Cloud Build pipeline: build grubcrawler and push to Docker Hub.
+#
+# Used by deploy.ps1 -Target dockerhub-cloud when a local Docker Hub
+# push isn't viable (slow/unstable home network, large camoufox archive).
+# Cloud Build runs on Google's gigabit network so camoufox and chromium
+# downloads complete in seconds, not minutes.
+#
+# Required setup (one-time):
+#   1. Create a Docker Hub Personal Access Token with Read/Write/Delete
+#      scope at hub.docker.com/settings/security
+#   2. Store it in Secret Manager:
+#        printf '%s' "<TOKEN>" | gcloud secrets create dockerhub-token \
+#          --data-file=- --project gnosis-459403
+#   3. Grant Cloud Build SA access:
+#        PROJECT_NUMBER=$(gcloud projects describe gnosis-459403 \
+#          --format='value(projectNumber)')
+#        gcloud secrets add-iam-policy-binding dockerhub-token \
+#          --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+#          --role="roles/secretmanager.secretAccessor" \
+#          --project gnosis-459403
+#
+# Submit:
+#   gcloud builds submit --config cloudbuild.yaml \
+#     --substitutions=_DH_USERNAME=<user>,_DH_REPO=deepbluedynamics/grubcrawler,_DATE_TAG=$(date +%Y%m%d-%H%M)
+
+steps:
+  # Build the image. Tags both ':latest' and a date-stamped tag so old
+  # releases stay reachable.
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build'
+    args:
+      - 'build'
+      - '-t'
+      - '${_DH_REPO}:latest'
+      - '-t'
+      - '${_DH_REPO}:${_DATE_TAG}'
+      - '.'
+
+  # Login to Docker Hub using the token from Secret Manager.
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'login'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - 'echo "$$DOCKERHUB_TOKEN" | docker login --username ${_DH_USERNAME} --password-stdin'
+    secretEnv: ['DOCKERHUB_TOKEN']
+
+  # Push both tags. Each tag pushes only the differing layers, so the
+  # dated push is cheap after the :latest push.
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-latest'
+    args: ['push', '${_DH_REPO}:latest']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-dated'
+    args: ['push', '${_DH_REPO}:${_DATE_TAG}']
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/${PROJECT_ID}/secrets/dockerhub-token/versions/latest
+      env: 'DOCKERHUB_TOKEN'
+
+substitutions:
+  _DH_USERNAME: deepbluedynamics       # Docker Hub username that owns the token
+  _DH_REPO: deepbluedynamics/grubcrawler
+  _DATE_TAG: latest                     # caller overrides with a real date
+
+options:
+  # Bigger machine — camoufox + chromium + maturin compile fit comfortably.
+  machineType: 'E2_HIGHCPU_8'
+  diskSizeGb: 100
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: '3600s'

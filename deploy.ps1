@@ -41,7 +41,7 @@ Deploy to Cloud Run with mesh enabled, peering with local node
 #>
 
 param(
-    [ValidateSet("local", "cloudrun", "mesh", "dockerhub")]
+    [ValidateSet("local", "cloudrun", "mesh", "dockerhub", "dockerhub-cloud")]
     [string]$Target = "local",
 
     [string]$Tag = "latest",
@@ -52,7 +52,9 @@ param(
 
     [string]$CloudMeshPeer = "",
 
-    [string]$DockerHubRepo = "deepbluedynamics/grubcrawler"
+    [string]$DockerHubRepo = "deepbluedynamics/grubcrawler",
+
+    [string]$DockerHubUsername = "deepbluedynamics"
 )
 
 # Configuration — matches grub-site / gnosis-ocr pattern
@@ -67,7 +69,7 @@ Write-Host "==> Deploying $ServiceName to $Target" -ForegroundColor Cyan
 # ---------------------------------------------------------------------------
 # Validate prerequisites
 # ---------------------------------------------------------------------------
-if ($Target -eq "cloudrun") {
+if ($Target -eq "cloudrun" -or $Target -eq "dockerhub-cloud") {
     # Check gcloud
     try {
         $null = gcloud auth list --filter="status:ACTIVE" --format="value(account)" 2>$null
@@ -86,8 +88,6 @@ if ($Target -eq "cloudrun") {
 # ---------------------------------------------------------------------------
 # Build image
 # ---------------------------------------------------------------------------
-Write-Host "==> Building Docker image..." -ForegroundColor Yellow
-
 if ($Target -eq "cloudrun") {
     $FullImageName = "${ImageName}:${Tag}"
 } elseif ($Target -eq "dockerhub") {
@@ -96,20 +96,26 @@ if ($Target -eq "cloudrun") {
     $FullImageName = "${ServiceName}:${Tag}"
 }
 
-$BuildArgs = @()
-if ($Rebuild) { $BuildArgs += "--no-cache" }
+# dockerhub-cloud runs the build remotely on Google Cloud Build, so skip
+# the local docker build entirely.
+if ($Target -ne "dockerhub-cloud") {
+    Write-Host "==> Building Docker image..." -ForegroundColor Yellow
 
-try {
-    docker build $BuildArgs -t $FullImageName .
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "Docker build failed"
+    $BuildArgs = @()
+    if ($Rebuild) { $BuildArgs += "--no-cache" }
+
+    try {
+        docker build $BuildArgs -t $FullImageName .
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Docker build failed"
+            exit 1
+        }
+        Write-Host "==> Image built: $FullImageName" -ForegroundColor Green
+    }
+    catch {
+        Write-Error "Failed to build Docker image: $_"
         exit 1
     }
-    Write-Host "==> Image built: $FullImageName" -ForegroundColor Green
-}
-catch {
-    Write-Error "Failed to build Docker image: $_"
-    exit 1
 }
 
 # ---------------------------------------------------------------------------
@@ -337,6 +343,58 @@ switch ($Target) {
         }
         catch {
             Write-Error "Failed to push to Docker Hub: $_"
+            exit 1
+        }
+    }
+
+    "dockerhub-cloud" {
+        Write-Host "==> Building and pushing to Docker Hub via Cloud Build..." -ForegroundColor Yellow
+
+        # Sanity-check the secret exists. Cloud Build won't fail until step 2
+        # otherwise, and the error from there is harder to read.
+        $secretExists = gcloud secrets describe dockerhub-token --project $ProjectId --format='value(name)' 2>$null
+        if (-not $secretExists) {
+            Write-Error @"
+Secret 'dockerhub-token' not found in project $ProjectId.
+
+One-time setup:
+  printf '%s' "<YOUR_DOCKERHUB_PAT>" | gcloud secrets create dockerhub-token \\
+    --data-file=- --project $ProjectId
+
+  `$PROJECT_NUMBER = gcloud projects describe $ProjectId --format='value(projectNumber)'
+  gcloud secrets add-iam-policy-binding dockerhub-token \\
+    --member="serviceAccount:`${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \\
+    --role="roles/secretmanager.secretAccessor" \\
+    --project $ProjectId
+"@
+            exit 1
+        }
+
+        $DateTag = Get-Date -Format "yyyyMMdd-HHmm"
+        $subs = "_DH_USERNAME=$DockerHubUsername,_DH_REPO=$DockerHubRepo,_DATE_TAG=$DateTag"
+
+        Write-Host "==> Submitting build to Cloud Build (machineType=E2_HIGHCPU_8)..." -ForegroundColor Yellow
+        Write-Host "    Repo:     $DockerHubRepo" -ForegroundColor Cyan
+        Write-Host "    Tags:     latest, $DateTag" -ForegroundColor Cyan
+        Write-Host "    Username: $DockerHubUsername" -ForegroundColor Cyan
+
+        try {
+            gcloud builds submit --config cloudbuild.yaml `
+                --substitutions $subs `
+                --project $ProjectId
+            if ($LASTEXITCODE -ne 0) {
+                Write-Error "Cloud Build failed"
+                exit 1
+            }
+
+            Write-Host ""
+            Write-Host "==> Pushed to Docker Hub via Cloud Build" -ForegroundColor Green
+            Write-Host "    docker pull ${DockerHubRepo}:latest" -ForegroundColor Cyan
+            Write-Host "    docker pull ${DockerHubRepo}:$DateTag" -ForegroundColor Cyan
+            Write-Host "    https://hub.docker.com/r/${DockerHubRepo}" -ForegroundColor Cyan
+        }
+        catch {
+            Write-Error "Failed to submit Cloud Build: $_"
             exit 1
         }
     }
