@@ -1,0 +1,62 @@
+# Fast incremental deploy to Cloud Run via Kaniko-cached image build.
+#
+# First run is slow (cold cache: camoufox + chromium downloads, ~25 min).
+# Subsequent runs reuse the layer cache from GCR and finish in ~2-3 min
+# unless something invalidates the camoufox layer.
+#
+# Submit:
+#   gcloud builds submit --config cloudbuild-deploy.yaml --project gnosis-459403 \
+#     --substitutions=_SHA=$(git rev-parse --short HEAD)
+#
+# Cache lives at: gcr.io/gnosis-459403/grubcrawler/cache/*
+
+substitutions:
+  _SERVICE: grubcrawler
+  _REGION: us-central1
+  _IMAGE: gcr.io/gnosis-459403/grubcrawler
+  _SHA: dev
+
+steps:
+  # Build with Kaniko. --cache=true tells it to reuse layer cache, --cache-repo
+  # tells it WHERE to read/write that cache (in our project's GCR).
+  - id: build
+    name: 'gcr.io/kaniko-project/executor:latest'
+    args:
+      - --destination=${_IMAGE}:latest
+      - --destination=${_IMAGE}:${_SHA}
+      - --cache=true
+      - --cache-ttl=168h           # 7 days
+      - --cache-repo=${_IMAGE}/cache
+      - --dockerfile=Dockerfile
+      - --context=dir:///workspace
+      - --use-new-run              # lower-memory snapshotter
+      - --snapshot-mode=redo       # only re-snapshot changed files
+
+  # Deploy the freshly-built image to Cloud Run. Uses --update-env-vars so
+  # all existing env vars are preserved; we only inject GIT_SHA so /health
+  # can surface what revision is actually running.
+  - id: deploy
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_IMAGE}:${_SHA}
+      - --region=${_REGION}
+      - --project=$PROJECT_ID
+      - --allow-unauthenticated
+      - --port=6792
+      - --update-env-vars=GIT_SHA=${_SHA}
+
+options:
+  machineType: E2_HIGHCPU_32     # 32 vCPU / 32 GB RAM — needed for camoufox snapshot
+  logging: CLOUD_LOGGING_ONLY
+
+# Note: we intentionally omit a top-level `images:` section. Kaniko pushes the
+# image via its --destination flags in step 0, and Cloud Build's post-step
+# images validator uses a tag resolver that doesn't recognize Kaniko's
+# digest-based pushes — including `images:` makes a successful build report
+# as FAILURE.
+
+timeout: 2400s

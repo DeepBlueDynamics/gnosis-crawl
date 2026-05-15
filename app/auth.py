@@ -55,22 +55,33 @@ class AuthClient:
         self.auth_url = settings.gnosis_auth_url.rstrip("/")
 
     async def validate_token(self, token: str) -> Dict:
+        # JWTs from the browser magic-link flow are 3-part base64-dot strings.
+        # ahp_ tokens are long opaque strings prefixed with "ahp_".
+        is_jwt = token.count(".") == 2 and not token.startswith("ahp_")
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.post(
-                    f"{self.auth_url}/auth",
-                    data={"token": token},
-                )
-
-            if resp.status_code != 200:
-                raise HTTPException(status_code=401, detail="Invalid or inactive token")
-
-            jwt_token = resp.json().get("access_token", "")
-            # Decode JWT payload (no local verification needed — nuts-auth already validated)
-            payload = json.loads(base64.urlsafe_b64decode(jwt_token.split(".")[1] + "=="))
+                if is_jwt:
+                    # Verify the JWT against nuts-auth and decode claims.
+                    resp = await client.get(
+                        f"{self.auth_url}/api/verify",
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                    if resp.status_code != 200:
+                        raise HTTPException(status_code=401, detail="Invalid or expired token")
+                    payload = resp.json()
+                else:
+                    # ahp_ token → exchange for a fresh JWT.
+                    resp = await client.post(
+                        f"{self.auth_url}/auth",
+                        data={"token": token},
+                    )
+                    if resp.status_code != 200:
+                        raise HTTPException(status_code=401, detail="Invalid or inactive token")
+                    jwt_token = resp.json().get("access_token", "")
+                    payload = json.loads(base64.urlsafe_b64decode(jwt_token.split(".")[1] + "=="))
 
             email = payload.get("sub", "unknown@grub-crawl.local")
-            logger.info(f"Token validated for: {email}")
+            logger.info(f"Token validated for: {email} (jwt={is_jwt})")
 
             return {
                 "subject": email,

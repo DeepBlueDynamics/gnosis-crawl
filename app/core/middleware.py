@@ -127,7 +127,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return self.auth_client
     
     async def dispatch(self, request: Request, call_next):
-        # Check if auth is disabled globally (for Porter/Kubernetes deployments)
+        # Check if auth is disabled globally (local docker / self-hosted)
         from app.config import settings
         if settings.disable_auth:
             logger.debug("Auth disabled globally - skipping authentication")
@@ -136,7 +136,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Skip auth for certain paths - CHECK THIS FIRST before any auth client access
         logger.debug(f"AuthMiddleware checking path: '{request.url.path}'")
-        if request.url.path.startswith("/mcp") or request.url.path in ["/", "/health", "/tools", "/@search", "/auth", "/docs", "/redoc", "/openapi.json", "/view", "/download", "/site", "/api/site/error"]:
+        if request.url.path in ["/", "/health", "/tools", "/@search", "/auth", "/docs", "/redoc", "/openapi.json", "/view", "/download", "/site", "/api/site/error", "/dashboard", "/login", "/auth/callback"]:
             logger.debug(f"Skipping auth for path: {request.url.path}")
             try:
                 response = await call_next(request)
@@ -192,7 +192,7 @@ async def auth_middleware(request: Request, call_next):
     """
     from app.config import settings
 
-    # Check if auth is disabled globally (for Porter/Kubernetes deployments)
+    # Check if auth is disabled globally (local docker / self-hosted)
     if settings.disable_auth:
         logger.debug("Auth disabled globally - skipping authentication")
         return await call_next(request)
@@ -200,7 +200,7 @@ async def auth_middleware(request: Request, call_next):
     from app.auth import auth_client
 
     # Skip auth for certain paths
-    if request.url.path.startswith("/mcp") or request.url.path in ["/", "/health", "/tools", "/@search", "/auth", "/docs", "/redoc", "/openapi.json", "/site", "/api/site/error"]:
+    if request.url.path in ["/", "/health", "/tools", "/@search", "/auth", "/docs", "/redoc", "/openapi.json", "/site", "/api/site/error", "/dashboard", "/login", "/auth/callback"]:
         return await call_next(request)
 
     # Extract bearer token from Authorization header

@@ -102,7 +102,7 @@ curl "https://api.example.com/sessions/{session_id}/file?path=results/abc123.jso
 
 ## Configuration
 
-For Porter/unauthenticated deployments, use `.env.porter`:
+For self-hosted/unauthenticated deployments, set `DISABLE_AUTH=true` in your `.env`:
 ```env
 DISABLE_AUTH=true
 ```

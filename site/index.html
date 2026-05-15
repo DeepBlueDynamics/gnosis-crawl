@@ -1,1528 +1,470 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Grub Crawler — Agentic Web Crawler with Mesh P2P</title>
-<meta name="description" content="Agentic web crawler with Ghost Protocol, Mesh P2P, Camoufox anti-detection, autonomous agent loop, MCP tools, and multi-provider LLM support." />
-<meta property="og:title" content="Grub Crawler 2.0" />
-<meta property="og:description" content="The world's only agentic web crawler with a peer-to-peer mesh. Ghost Protocol, Camoufox, MCP tooling, policy gates, and replayable traces." />
-<meta property="og:type" content="website" />
-<meta property="og:url" content="https://grubcrawler.dev" />
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>&#x1f577;</text></svg>" />
-<style>body{margin:0;padding:0;background:#080808;}</style>
-</head>
-<body>
-<div id="root"></div>
-<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
-<script type="text/babel">
-const { useState, useEffect, useRef, useCallback } = React;
-
-/* ── Global error reporting ───────────────────────────────── */
-function reportError(payload) {
-  try {
-    fetch("/api/site/error", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }).catch(() => {});
-  } catch (_) {}
-}
-window.onerror = function (message, filename, lineno, colno, error) {
-  reportError({ type: "onerror", message, filename, lineno, colno, stack: error?.stack });
-};
-window.addEventListener("unhandledrejection", function (e) {
-  reportError({ type: "unhandledrejection", message: String(e.reason), stack: e.reason?.stack });
-});
-
-/* ── Constants ────────────────────────────────────────────── */
-const NAV_LINKS = ["Why Grub", "Features", "Mesh", "Architecture", "API", "Status", "Try It"];
-
-const COMPARISON = [
-  { feature: "Self-hosted",           crawl4ai: true,  firecrawl: "partial", apify: true,  scrapy: true,  browserbase: false, scrapfly: false, grub: true },
-  { feature: "Anti-detect browser",   crawl4ai: "partial", firecrawl: false, apify: "partial", scrapy: false, browserbase: "partial", scrapfly: "partial", grub: true },
-  { feature: "Ghost Protocol",        crawl4ai: false, firecrawl: false, apify: false, scrapy: false, browserbase: false, scrapfly: false, grub: true },
-  { feature: "Per-request proxy",     crawl4ai: true,  firecrawl: "partial", apify: true,  scrapy: "partial", browserbase: true,  scrapfly: true,  grub: true },
-  { feature: "Stealth patches",       crawl4ai: true,  firecrawl: false, apify: true,  scrapy: false, browserbase: true,  scrapfly: true,  grub: true },
-  { feature: "Agent loop",            crawl4ai: true,  firecrawl: true,  apify: true,  scrapy: false, browserbase: true,  scrapfly: "partial", grub: true },
-  { feature: "Live browser stream",   crawl4ai: true,  firecrawl: true,  apify: "partial", scrapy: false, browserbase: true,  scrapfly: true,  grub: true },
-  { feature: "Markdown output",       crawl4ai: true,  firecrawl: true,  apify: true,  scrapy: false, browserbase: true,  scrapfly: true,  grub: true },
-  { feature: "MCP tools",             crawl4ai: true,  firecrawl: true,  apify: true,  scrapy: "partial", browserbase: true,  scrapfly: true,  grub: true },
-  { feature: "Multi-provider LLM",    crawl4ai: true,  firecrawl: "partial", apify: "partial", scrapy: false, browserbase: "partial", scrapfly: "partial", grub: true },
-  { feature: "Policy enforcement",    crawl4ai: false, firecrawl: false, apify: false, scrapy: false, browserbase: false, scrapfly: false, grub: true },
-  { feature: "Replayable traces",     crawl4ai: false, firecrawl: false, apify: "partial", scrapy: false, browserbase: "partial", scrapfly: false, grub: true },
-  { feature: "Prompt injection defense", crawl4ai: false, firecrawl: false, apify: false, scrapy: false, browserbase: false, scrapfly: false, grub: true },
-  { feature: "Mesh P2P",              crawl4ai: false, firecrawl: false, apify: false, scrapy: false, browserbase: false, scrapfly: false, grub: true },
-];
-
-const FEATURES = [
-  { icon: "\u25C9", title: "Ghost Protocol", desc: "Vision-assisted extraction handles anti-bot walls and blocked renders when DOM extraction fails. Screenshots the page, sends to LLM, extracts content." },
-  { icon: "\u2B21", title: "Autonomous Agent Loop", desc: "Bounded planning/execution loop for multi-step browsing, tool orchestration, and task completion with configurable stop conditions." },
-  { icon: "\u25B3", title: "Multi-Provider Rotation", desc: "OpenAI, Anthropic, and Ollama adapters with automatic fallback routing when providers fail mid-run." },
-  { icon: "\u25C7", title: "Policy Enforcement", desc: "Domain gates, private-range blocking, and secret redaction enforced before every fetch and tool call." },
-  { icon: "\u25A3", title: "Replayable Traces", desc: "Every run emits structured JSON traces. Failures, policy denials, and extraction paths can be replayed and audited." },
-  { icon: "\u23E3", title: "MCP Tool Bridge", desc: "17 tools exposed via MCP protocol. Crawler, cache, agent, ghost, and mesh capabilities for host-side orchestration." },
-  { icon: "\u2B22", title: "Mesh P2P", desc: "Agents talking to agents. Automatic peer discovery via gossip protocol, load-aware routing, and 1-hop cross-node tool execution." },
-  { icon: "\u25D0", title: "Anti-Detection", desc: "Camoufox anti-detect browser with per-request proxy rotation and opt-in stealth patches. Prevention handles 95% of blocks." },
-];
-
-const API_GROUPS = [
-  {
-    name: "Core Crawling",
-    endpoints: [
-      { method: "POST", path: "/api/crawl", desc: "Single URL crawl (HTML + markdown)", status: "Live" },
-      { method: "POST", path: "/api/markdown", desc: "Single or multi-URL markdown extraction", status: "Live" },
-      { method: "POST", path: "/api/batch", desc: "Batch crawl with job tracking", status: "Live" },
-      { method: "POST", path: "/api/raw", desc: "Raw HTML extraction (no markdown)", status: "Live" },
-      { method: "GET", path: "/view", desc: "Browser-rendered HTML viewer", status: "Live" },
-      { method: "GET", path: "/download", desc: "File download through crawler", status: "Live" },
-    ],
-  },
-  {
-    name: "Agent + Ghost",
-    endpoints: [
-      { method: "POST", path: "/api/agent/run", desc: "Submit task to autonomous agent loop", status: "Live" },
-      { method: "GET", path: "/api/agent/status/{run_id}", desc: "Load run status and trace", status: "Live" },
-      { method: "POST", path: "/api/agent/ghost", desc: "Ghost Protocol screenshot + vision extract", status: "Live" },
-    ],
-  },
-  {
-    name: "Job Management",
-    endpoints: [
-      { method: "POST", path: "/api/jobs/create", desc: "Generic job submission", status: "Live" },
-      { method: "POST", path: "/api/jobs/crawl", desc: "Submit single URL crawl job", status: "Live" },
-      { method: "POST", path: "/api/jobs/batch-crawl", desc: "Submit batch crawl job", status: "Live" },
-      { method: "POST", path: "/api/jobs/markdown", desc: "Submit markdown-only job", status: "Live" },
-      { method: "POST", path: "/api/jobs/process-job", desc: "Cloud Tasks worker endpoint", status: "Live" },
-      { method: "POST", path: "/api/wraith", desc: "AI-driven crawl workflow", status: "Placeholder" },
-    ],
-  },
-  {
-    name: "Remote Cache",
-    endpoints: [
-      { method: "POST", path: "/api/cache/search", desc: "Fuzzy search cached content", status: "Live" },
-      { method: "GET", path: "/api/cache/list", desc: "List cached document metadata", status: "Live" },
-      { method: "GET", path: "/api/cache/doc/{doc_id}", desc: "Fetch one cached document", status: "Live" },
-      { method: "POST", path: "/api/cache/upsert", desc: "Upsert cache entries", status: "Live" },
-      { method: "POST", path: "/api/cache/prune", desc: "Prune cache entries by TTL/domain", status: "Live" },
-    ],
-  },
-  {
-    name: "Session Management",
-    endpoints: [
-      { method: "GET", path: "/api/sessions/{id}/files", desc: "List session files", status: "Live" },
-      { method: "GET", path: "/api/sessions/{id}/file", desc: "Get specific session file", status: "Live" },
-      { method: "GET", path: "/api/sessions/{id}/status", desc: "Session progress status", status: "Live" },
-      { method: "GET", path: "/api/sessions/{id}/results", desc: "Fetch all crawl results", status: "Live" },
-      { method: "GET", path: "/api/sessions/{id}/screenshots", desc: "List session screenshots", status: "Live" },
-    ],
-  },
-  {
-    name: "Live Stream",
-    endpoints: [
-      { method: "WS", path: "/stream/{session_id}", desc: "WebSocket viewport stream", status: "Live" },
-      { method: "GET", path: "/stream/{session_id}/mjpeg", desc: "MJPEG fallback stream", status: "Live" },
-      { method: "GET", path: "/stream/{session_id}/status", desc: "Stream session status", status: "Live" },
-      { method: "GET", path: "/stream/pool/status", desc: "Browser pool status", status: "Live" },
-    ],
-  },
-  {
-    name: "Mesh",
-    endpoints: [
-      { method: "POST", path: "/mesh/join", desc: "Peer join + gossip discovery", status: "Live" },
-      { method: "POST", path: "/mesh/heartbeat", desc: "Peer heartbeat with load metrics", status: "Live" },
-      { method: "POST", path: "/mesh/execute", desc: "Cross-node tool execution (1-hop max)", status: "Live" },
-      { method: "POST", path: "/mesh/leave", desc: "Peer departure notification", status: "Live" },
-      { method: "GET", path: "/mesh/peers", desc: "List known peers + health status", status: "Live" },
-      { method: "GET", path: "/mesh/status", desc: "This node's mesh status + load", status: "Live" },
-    ],
-  },
-  {
-    name: "System",
-    endpoints: [
-      { method: "GET", path: "/health", desc: "Health check + tool count + mesh info", status: "Live" },
-      { method: "GET", path: "/tools", desc: "List registered AHP tools", status: "Live" },
-      { method: "GET", path: "/site", desc: "Embedded landing page", status: "Live" },
-      { method: "GET", path: "/{tool_name}", desc: "Execute AHP tool (catch-all)", status: "Live" },
-    ],
-  },
-];
-
-const MCP_TOOLS = [
-  "crawl_url", "crawl_batch", "raw_html", "download_file", "crawl_validate",
-  "crawl_search", "crawl_cache_list", "crawl_remote_search", "crawl_remote_cache_list",
-  "crawl_remote_cache_doc", "agent_run", "agent_status", "ghost_extract",
-  "mesh_peers", "mesh_status", "set_auth_token", "crawl_status",
-];
-
-const ARCH_LAYERS = [
-  { name: "Agent Core", items: ["Bounded State Machine", "Typed Errors", "Tool Dispatcher", "Stop Conditions"] },
-  { name: "Provider Adapters", items: ["OpenAI", "Anthropic", "Ollama", "Fallback Rotation"] },
-  { name: "Ghost Protocol", items: ["Block Detection", "Screenshot Capture", "Vision Extraction", "Auto Trigger"] },
-  { name: "Anti-Detection", items: ["Camoufox Browser", "Per-Request Proxy", "Stealth Patches", "Fingerprint Rotation"] },
-  { name: "Mesh Coordinator", items: ["Gossip Discovery", "Load-Aware Routing", "1-Hop Execution", "Heartbeat Monitor"] },
-  { name: "Policy Gates", items: ["Domain Allowlist", "Private Range Deny", "Secret Redaction", "Prompt Injection Defense"] },
-  { name: "Observability", items: ["EventBus", "TraceCollector", "RunSummary Persistence", "Replay JSON"] },
-  { name: "Infrastructure", items: ["FastAPI Routes", "Playwright Engine", "Local/GCS Storage", "Job Processor", "Browser Pool"] },
-];
-
-/* ── Hooks ────────────────────────────────────────────────── */
-function useScrollReveal() {
-  const ref = useRef(null);
-  const [visible, setVisible] = useState(false);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(
-      ([e]) => { if (e.isIntersecting) { setVisible(true); obs.disconnect(); } },
-      { threshold: 0.12 }
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
-  return [ref, visible];
-}
-
-function usePoller(url, intervalMs, enabled = true) {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
-  useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    const poll = () => {
-      fetch(url).then(r => {
-        if (!r.ok) throw new Error(r.status + "");
-        return r.json();
-      }).then(d => {
-        if (!cancelled) { setData(d); setError(null); }
-      }).catch(e => {
-        if (!cancelled) setError(e.message);
-      });
-    };
-    poll();
-    const id = setInterval(poll, intervalMs);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [url, intervalMs, enabled]);
-  return { data, error };
-}
-
-/* ── Shared components ────────────────────────────────────── */
-function RevealDiv({ children, delay = 0, className = "", style = {} }) {
-  const [ref, visible] = useScrollReveal();
-  return (
-    <div ref={ref} className={className} style={{
-      ...style,
-      opacity: visible ? 1 : 0,
-      transform: visible ? "translateY(0)" : "translateY(32px)",
-      transition: `opacity 0.7s cubic-bezier(.22,1,.36,1) ${delay}s, transform 0.7s cubic-bezier(.22,1,.36,1) ${delay}s`,
-    }}>
-      {children}
-    </div>
-  );
-}
-
-function SectionLabel({ children }) {
-  return (
-    <div style={{
-      fontFamily: "'IBM Plex Mono', monospace",
-      fontSize: 11, letterSpacing: "0.25em", textTransform: "uppercase",
-      color: "rgba(200,255,0,0.45)", marginBottom: 16,
-    }}>
-      {children}
-    </div>
-  );
-}
-
-function SectionTitle({ children }) {
-  return (
-    <h2 style={{
-      fontFamily: "'Space Mono', monospace",
-      fontSize: "clamp(2rem, 5vw, 3.2rem)",
-      fontWeight: 700, letterSpacing: "-0.03em",
-      color: "#fff", margin: "0 0 64px",
-    }}>
-      {children}
-    </h2>
-  );
-}
-
-function GrainOverlay() {
-  return (
-    <div style={{
-      position: "fixed", inset: 0, pointerEvents: "none", zIndex: 9999,
-      backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
-      opacity: 0.03,
-    }} />
-  );
-}
-
-/* ── Nav ──────────────────────────────────────────────────── */
-function Nav({ activeSection, onNav }) {
-  const [scrolled, setScrolled] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
-  useEffect(() => {
-    const h = () => setScrolled(window.scrollY > 40);
-    window.addEventListener("scroll", h, { passive: true });
-    return () => window.removeEventListener("scroll", h);
-  }, []);
-
-  return (
-    <nav style={{
-      position: "fixed", top: 0, left: 0, right: 0, zIndex: 100,
-      padding: "0 clamp(1.5rem, 4vw, 4rem)",
-      height: 64,
-      display: "flex", alignItems: "center", justifyContent: "space-between",
-      background: scrolled ? "rgba(8,8,8,0.85)" : "transparent",
-      backdropFilter: scrolled ? "blur(16px) saturate(1.4)" : "none",
-      borderBottom: scrolled ? "1px solid rgba(255,255,255,0.06)" : "1px solid transparent",
-      transition: "all 0.4s ease",
-    }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <span style={{
-          fontFamily: "'IBM Plex Mono', monospace",
-          fontSize: 20, fontWeight: 700, letterSpacing: "-0.5px",
-          color: "#c8ff00", cursor: "pointer",
-        }} onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
-          GRUB<span style={{ color: "rgba(255,255,255,0.35)", fontWeight: 500 }}>CRAWLER</span>
-        </span>
-      </div>
-      {/* Desktop nav */}
-      <div style={{ display: "flex", gap: "clamp(12px, 2vw, 28px)", alignItems: "center" }}
-           className="nav-desktop">
-        {NAV_LINKS.map((l) => {
-          const id = l.toLowerCase().replace(/\s+/g, "-");
-          return (
-            <button key={l} onClick={() => onNav(id)}
-              style={{
-                background: "none", border: "none", cursor: "pointer",
-                fontFamily: "'IBM Plex Mono', monospace",
-                fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
-                color: activeSection === id ? "#c8ff00" : "rgba(255,255,255,0.45)",
-                transition: "color 0.25s", padding: "4px 0", whiteSpace: "nowrap",
-              }}>
-              {l}
-            </button>
-          );
-        })}
-      </div>
-      {/* Mobile hamburger */}
-      <button className="nav-mobile-btn" onClick={() => setMenuOpen(!menuOpen)}
-        style={{
-          display: "none", background: "none", border: "none", cursor: "pointer",
-          color: "#c8ff00", fontSize: 22, padding: "4px 8px",
-        }}>
-        {menuOpen ? "\u2715" : "\u2630"}
-      </button>
-      {menuOpen && (
-        <div style={{
-          position: "absolute", top: 64, left: 0, right: 0,
-          background: "rgba(8,8,8,0.95)", backdropFilter: "blur(16px)",
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
-          padding: "16px 24px", display: "flex", flexDirection: "column", gap: 12,
-        }}>
-          {NAV_LINKS.map(l => {
-            const id = l.toLowerCase().replace(/\s+/g, "-");
-            return (
-              <button key={l} onClick={() => { onNav(id); setMenuOpen(false); }}
-                style={{
-                  background: "none", border: "none", cursor: "pointer", textAlign: "left",
-                  fontFamily: "'IBM Plex Mono', monospace", fontSize: 13,
-                  color: activeSection === id ? "#c8ff00" : "rgba(255,255,255,0.5)",
-                  letterSpacing: "0.06em", textTransform: "uppercase", padding: "8px 0",
-                }}>
-                {l}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </nav>
-  );
-}
-
-/* ── Hero ─────────────────────────────────────────────────── */
-function Hero({ introDone, onIntroDone, skipIntro }) {
-  const [loaded, setLoaded] = useState(false);
-  const [bootPhase, setBootPhase] = useState(() => (skipIntro ? "stable" : "idle"));
-  const [typedVersion, setTypedVersion] = useState(() => (skipIntro ? "2.0" : ""));
-  useEffect(() => { requestAnimationFrame(() => setLoaded(true)); }, []);
-  useEffect(() => {
-    if (skipIntro) return;
-    const timers = [];
-    const steps = ["2", "2.", "2.0"];
-    timers.push(setTimeout(() => setBootPhase("shake-lite"), 3500));
-    timers.push(setTimeout(() => setBootPhase("shake-hard"), 5700));
-    timers.push(setTimeout(() => {
-      setBootPhase("typing");
-      let si = 0;
-      const tt = setInterval(() => {
-        setTypedVersion(steps[si] || "2.0");
-        si++;
-        if (si >= steps.length) {
-          clearInterval(tt);
-          setBootPhase("fading");
-          timers.push(setTimeout(() => setBootPhase("stable"), 1800));
-        }
-      }, 420);
-      timers.push(tt);
-    }, 7500));
-    return () => { timers.forEach(t => { clearTimeout(t); clearInterval(t); }); };
-  }, [skipIntro]);
-  useEffect(() => {
-    if (bootPhase !== "stable" || introDone) return;
-    const t = setTimeout(() => onIntroDone?.(), 120);
-    return () => clearTimeout(t);
-  }, [bootPhase, introDone, onIntroDone]);
-  const titleText = `GRUB${typedVersion ? ` ${typedVersion}` : ""}`;
-
-  return (
-    <section style={{
-      minHeight: "100vh", display: "flex", flexDirection: "column",
-      justifyContent: "center", alignItems: "center",
-      padding: "120px clamp(1.5rem, 5vw, 6rem) 80px",
-      position: "relative", overflow: "hidden",
-    }}>
-      <div style={{
-        position: "absolute", top: "-30%", left: "50%", transform: "translateX(-50%)",
-        width: "140vw", height: "80vh",
-        background: "radial-gradient(ellipse at center, rgba(200,255,0,0.06) 0%, transparent 65%)",
-        pointerEvents: "none",
-      }} />
-      <div style={{
-        position: "absolute", inset: 0, pointerEvents: "none",
-        backgroundImage: `linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px)`,
-        backgroundSize: "80px 80px",
-      }} />
-
-      {/* Two-column hero layout */}
-      <div className="hero-row" style={{
-        display: "flex", alignItems: "center", gap: "clamp(40px, 6vw, 80px)",
-        position: "relative", zIndex: 1, width: "100%",
-        maxWidth: 1200, margin: "0 auto",
-      }}>
-        {/* Left: text content */}
-        <div style={{
-          flex: "1 1 55%", minWidth: 0,
-          opacity: loaded ? 1 : 0,
-          transform: loaded ? "translateY(0)" : "translateY(24px)",
-          transition: "all 1s cubic-bezier(.22,1,.36,1) 0.1s",
-        }}>
-          <div style={{
-            fontFamily: "'IBM Plex Mono', monospace",
-            fontSize: 11, letterSpacing: "0.25em", textTransform: "uppercase",
-            color: "rgba(200,255,0,0.5)", marginBottom: 28,
-            opacity: introDone ? 1 : 0,
-            transform: introDone ? "translateY(0)" : "translateY(8px)",
-            transition: "opacity 1s ease, transform 1s ease",
-          }}>
-            Reclaimed &middot; Rebuilt &middot; Distributed
-          </div>
-
-          <h1 style={{
-            fontFamily: "'Space Mono', monospace",
-            fontSize: "clamp(3rem, 8vw, 6.5rem)",
-            fontWeight: 700, letterSpacing: "-0.04em",
-            lineHeight: 0.9, margin: 0,
-            color: "#ffe000",
-            textShadow: "0 0 120px rgba(200,255,0,0.15), 0 0 40px rgba(200,255,0,0.08)",
-          }}>
-            <span className={`hero-mark phase-${bootPhase}`}>{titleText}</span>
-          </h1>
-
-          <div style={{
-            opacity: introDone ? 1 : 0,
-            transform: introDone ? "translateY(0)" : "translateY(12px)",
-            transition: "opacity 1s ease, transform 1s ease",
-            pointerEvents: introDone ? "auto" : "none",
-          }}>
-            <p style={{
-              fontFamily: "'Space Mono', monospace",
-              fontSize: "clamp(1rem, 2.2vw, 1.4rem)",
-              color: "rgba(255,255,255,0.7)", maxWidth: 520,
-              lineHeight: 1.5, margin: "24px 0 0",
-              letterSpacing: "-0.01em", fontWeight: 700,
-            }}>
-              The crawler that helped build the open web.<br />Back. Faster. Smarter. Yours.
-            </p>
-            <p style={{
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: "clamp(0.82rem, 1.5vw, 1rem)",
-              color: "rgba(255,255,255,0.45)", maxWidth: 480,
-              lineHeight: 1.7, margin: "16px 0 0",
-              letterSpacing: "0.01em",
-            }}>
-              17 tools for crawling. Ghost protocol.
-            </p>
-            <p style={{
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: "clamp(0.78rem, 1.3vw, 0.92rem)",
-              color: "rgba(200,255,0,0.55)", maxWidth: 500,
-              lineHeight: 1.75, margin: "22px 0 0",
-              letterSpacing: "0.005em",
-              borderLeft: "2px solid rgba(200,255,0,0.2)",
-              paddingLeft: 16,
-            }}>
-              In 2001, when the open web was a bet people were still making, GRUB was crawling it — feeding pages to Jimmy Wales and the early Wikipedia before Google had a monopoly on how the world found information. The original distributed crawl network. Now rebuilt as a sovereign, agentic mesh you can run, own, and extend. No surveillance. No lock-in. The provenance is real.
-            </p>
-            <div style={{
-              marginTop: 20, fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase",
-              color: "rgba(255,255,255,0.3)",
-            }}>
-              Python &middot; FastAPI &middot; Playwright &middot; Camoufox &middot; MCP &middot; Mesh P2P
-            </div>
-
-            <div style={{
-              display: "flex", gap: 14, marginTop: 40, flexWrap: "wrap",
-            }}>
-              <button style={{
-                fontFamily: "'IBM Plex Mono', monospace",
-                fontSize: 13, fontWeight: 600, padding: "14px 36px",
-                background: "#c8ff00", color: "#080808",
-                border: "none", cursor: "pointer",
-                letterSpacing: "0.06em", textTransform: "uppercase",
-                transition: "all 0.25s",
-              }}
-                onClick={() => document.getElementById("try-it")?.scrollIntoView({ behavior: "smooth" })}
-                onMouseEnter={e => { e.target.style.background = "#dfff4f"; e.target.style.transform = "translateY(-2px)"; }}
-                onMouseLeave={e => { e.target.style.background = "#c8ff00"; e.target.style.transform = "translateY(0)"; }}>
-                Try It
-              </button>
-              <button style={{
-                fontFamily: "'IBM Plex Mono', monospace",
-                fontSize: 13, fontWeight: 500, padding: "14px 36px",
-                background: "transparent", color: "rgba(255,255,255,0.6)",
-                border: "1px solid rgba(255,255,255,0.12)", cursor: "pointer",
-                letterSpacing: "0.06em", textTransform: "uppercase",
-                transition: "all 0.25s",
-              }}
-                onClick={() => document.getElementById("mesh")?.scrollIntoView({ behavior: "smooth" })}
-                onMouseEnter={e => { e.target.style.borderColor = "rgba(0,200,255,0.4)"; e.target.style.color = "#00c8ff"; }}
-                onMouseLeave={e => { e.target.style.borderColor = "rgba(255,255,255,0.12)"; e.target.style.color = "rgba(255,255,255,0.6)"; }}>
-                View Mesh
-              </button>
-              <button style={{
-                fontFamily: "'IBM Plex Mono', monospace",
-                fontSize: 13, fontWeight: 500, padding: "14px 36px",
-                background: "transparent", color: "rgba(255,255,255,0.6)",
-                border: "1px solid rgba(255,255,255,0.12)", cursor: "pointer",
-                letterSpacing: "0.06em", textTransform: "uppercase",
-                transition: "all 0.25s",
-              }}
-                onClick={() => window.open("https://github.com/deepbluedynamics/gnosis-crawl", "_blank", "noopener,noreferrer")}
-                onMouseEnter={e => { e.target.style.borderColor = "rgba(200,255,0,0.4)"; e.target.style.color = "#c8ff00"; }}
-                onMouseLeave={e => { e.target.style.borderColor = "rgba(255,255,255,0.12)"; e.target.style.color = "rgba(255,255,255,0.6)"; }}>
-                GitHub
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Right: placeholder image */}
-        <div className="hero-image" style={{
-          flex: "1 1 40%", minWidth: 0,
-          opacity: introDone ? 1 : 0,
-          transform: introDone ? "translateY(0) scale(1)" : "translateY(20px) scale(0.97)",
-          transition: "opacity 1.2s ease 0.2s, transform 1.2s ease 0.2s",
-        }}>
-          <div style={{
-            aspectRatio: "4 / 3",
-            background: "linear-gradient(135deg, rgba(200,255,0,0.04) 0%, rgba(0,200,255,0.04) 50%, rgba(255,154,0,0.03) 100%)",
-            border: "1px solid rgba(255,255,255,0.06)",
-            display: "flex", flexDirection: "column",
-            alignItems: "center", justifyContent: "center",
-            position: "relative", overflow: "hidden",
-          }}>
-            {/* Decorative mesh grid */}
-            <svg viewBox="0 0 200 150" style={{ width: "80%", height: "auto", opacity: 0.5 }}>
-              {/* Nodes */}
-              <circle cx="40" cy="30" r="6" fill="none" stroke="#c8ff00" strokeWidth="1" opacity="0.6" />
-              <circle cx="160" cy="30" r="6" fill="none" stroke="#00c8ff" strokeWidth="1" opacity="0.6" />
-              <circle cx="100" cy="75" r="8" fill="none" stroke="#c8ff00" strokeWidth="1.5" opacity="0.8" />
-              <circle cx="30" cy="120" r="6" fill="none" stroke="#00c8ff" strokeWidth="1" opacity="0.6" />
-              <circle cx="170" cy="120" r="6" fill="none" stroke="#ff9a00" strokeWidth="1" opacity="0.6" />
-              {/* Edges */}
-              <line x1="46" y1="33" x2="92" y2="72" stroke="#c8ff00" strokeWidth="0.5" opacity="0.3" />
-              <line x1="154" y1="33" x2="108" y2="72" stroke="#00c8ff" strokeWidth="0.5" opacity="0.3" />
-              <line x1="36" y1="117" x2="92" y2="78" stroke="#00c8ff" strokeWidth="0.5" opacity="0.3" />
-              <line x1="164" y1="117" x2="108" y2="78" stroke="#ff9a00" strokeWidth="0.5" opacity="0.3" />
-              <line x1="46" y1="30" x2="154" y2="30" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" strokeDasharray="4 4" />
-              <line x1="36" y1="120" x2="164" y2="120" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" strokeDasharray="4 4" />
-              {/* Center node inner dot */}
-              <circle cx="100" cy="75" r="2.5" fill="#c8ff00" opacity="0.6" />
-              {/* Pulse rings on center */}
-              <circle cx="100" cy="75" r="14" fill="none" stroke="#c8ff00" strokeWidth="0.5" opacity="0.2">
-                <animate attributeName="r" values="14;22;14" dur="3s" repeatCount="indefinite" />
-                <animate attributeName="opacity" values="0.2;0;0.2" dur="3s" repeatCount="indefinite" />
-              </circle>
-              {/* Labels */}
-              <text x="100" y="102" textAnchor="middle" fill="rgba(255,255,255,0.25)" fontSize="7" fontFamily="monospace">mesh coordinator</text>
-              <text x="40" y="18" textAnchor="middle" fill="rgba(200,255,0,0.35)" fontSize="6" fontFamily="monospace">node-a</text>
-              <text x="160" y="18" textAnchor="middle" fill="rgba(0,200,255,0.35)" fontSize="6" fontFamily="monospace">node-b</text>
-              <text x="30" y="138" textAnchor="middle" fill="rgba(0,200,255,0.35)" fontSize="6" fontFamily="monospace">node-c</text>
-              <text x="170" y="138" textAnchor="middle" fill="rgba(255,154,0,0.35)" fontSize="6" fontFamily="monospace">node-d</text>
-            </svg>
-            <div style={{
-              position: "absolute", bottom: 16, left: 0, right: 0, textAlign: "center",
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
-              letterSpacing: "0.1em", textTransform: "uppercase",
-              color: "rgba(255,255,255,0.15)",
-            }}>
-              replace with screenshot or diagram
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div style={{
-        position: "absolute", bottom: 32, left: "50%", transform: "translateX(-50%)",
-        opacity: loaded && introDone ? 0.3 : 0, transition: "opacity 1.2s ease",
-      }}>
-        <div style={{ width: 1, height: 48, background: "linear-gradient(to bottom, rgba(200,255,0,0.6), transparent)" }} />
-      </div>
-    </section>
-  );
-}
-
-/* ── Why Grub (comparison table) ─────────────────────────── */
-function WhyGrub() {
-  const competitors = ["Crawl4AI", "Firecrawl", "Apify", "Scrapy", "Browserbase", "Scrapfly", "Grub"];
-  const keys = ["crawl4ai", "firecrawl", "apify", "scrapy", "browserbase", "scrapfly", "grub"];
-
-  function cell(val, isGrub) {
-    if (val === true) return <span style={{ color: isGrub ? "#c8ff00" : "rgba(255,255,255,0.5)" }}>{"\u2714"}</span>;
-    if (val === false) return <span style={{ color: "rgba(255,255,255,0.15)" }}>{"\u2014"}</span>;
-    return <span style={{ color: "rgba(255,154,0,0.7)" }}>{"\u223C"}</span>;
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>grub — agentic web crawler</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23080808'/%3E%3Ctext x='50%25' y='62%25' font-size='22' text-anchor='middle' fill='%2300ff64'%3E🕷%3C/text%3E%3C/svg%3E">
+<meta name="description" content="Agentic web crawler with Ghost Protocol, Camoufox stealth, MCP tooling, policy gates and mesh P2P. Bypass anti-bot, get clean markdown back.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://grub.nuts.services">
+<meta property="og:title" content="grub — agentic web crawler">
+<meta property="og:description" content="Crawl. Bypass. Extract. Ghost Protocol + Camoufox + MCP. Mesh P2P. Rust-fast markdown extraction.">
+<style>
+  :root {
+    --bg: #080808; --fg: #c8c8d0; --accent: #00ff64; --accent2: #4ade80;
+    --dim: #555568; --card: #0f0f14; --border: #1a1f1a; --green: #00ff64;
+    --red: #ff5555; --yellow: #fbbf24;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+    font-size: 14px; line-height: 1.75;
+    padding: 2.5rem 2rem; max-width: 900px; margin: 0 auto;
+    overflow-wrap: break-word;
   }
 
-  return (
-    <section id="why-grub" style={{ padding: "120px clamp(1.5rem, 5vw, 6rem)", maxWidth: 1200, margin: "0 auto" }}>
-      <RevealDiv>
-        <SectionLabel>Comparison</SectionLabel>
-        <SectionTitle>Why Grub.</SectionTitle>
-      </RevealDiv>
-      <RevealDiv delay={0.1}>
-        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-          <table style={{
-            width: "100%", borderCollapse: "collapse", minWidth: 800,
-            fontFamily: "'IBM Plex Mono', monospace", fontSize: 12,
-          }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", fontWeight: 500, letterSpacing: "0.06em" }}>Feature</th>
-                {competitors.map((c, i) => (
-                  <th key={c} style={{
-                    textAlign: "center", padding: "14px 10px",
-                    borderBottom: "1px solid rgba(255,255,255,0.08)",
-                    color: i === competitors.length - 1 ? "#c8ff00" : "rgba(255,255,255,0.4)",
-                    fontWeight: i === competitors.length - 1 ? 700 : 500,
-                    letterSpacing: "0.04em", fontSize: 11,
-                  }}>{c}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {COMPARISON.map((row, ri) => (
-                <tr key={row.feature} style={{
-                  background: ri % 2 === 0 ? "transparent" : "rgba(255,255,255,0.015)",
-                }}>
-                  <td style={{ padding: "12px 16px", borderBottom: "1px solid rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.6)", fontSize: 12 }}>{row.feature}</td>
-                  {keys.map((k, ki) => (
-                    <td key={k} style={{
-                      textAlign: "center", padding: "12px 10px",
-                      borderBottom: "1px solid rgba(255,255,255,0.04)",
-                      background: ki === keys.length - 1 ? "rgba(200,255,0,0.03)" : "transparent",
-                    }}>
-                      {cell(row[k], ki === keys.length - 1)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </RevealDiv>
-      <RevealDiv delay={0.2}>
-        <p style={{
-          fontFamily: "'IBM Plex Mono', monospace", fontSize: 13,
-          color: "rgba(255,255,255,0.35)", marginTop: 32, lineHeight: 1.8,
-          maxWidth: 720,
-        }}>
-          Only Grub has <span style={{ color: "#c8ff00" }}>Ghost Protocol</span> — automatic vision-based fallback.
-          Prevention (<span style={{ color: "#ff9a00" }}>Camoufox + proxy + stealth</span>) handles 95% of blocks.
-          Ghost Protocol handles the rest.
-          <span style={{ color: "#00c8ff" }}> Mesh P2P</span> distributes the load across nodes.
-        </p>
-      </RevealDiv>
-    </section>
-  );
-}
+  /* ── Topbar (auth state) ── */
+  .topbar {
+    display: flex; justify-content: flex-end; align-items: center;
+    gap: 0.75rem; margin-bottom: 1.5rem; font-size: 0.78rem;
+  }
+  .topbar .user { color: var(--dim); }
+  .topbar .user b { color: var(--accent2); font-weight: 600; }
+  .topbar a, .topbar button {
+    background: none; border: 1px solid var(--border);
+    color: var(--fg); padding: 0.35rem 0.85rem; border-radius: 5px;
+    font-family: inherit; font-size: 0.78rem; cursor: pointer;
+    text-decoration: none; transition: all 0.15s;
+  }
+  .topbar a:hover, .topbar button:hover { border-color: var(--accent); color: var(--accent); }
+  .topbar .primary { border-color: var(--accent); color: var(--accent); }
+  .topbar .primary:hover { background: var(--accent); color: #000; }
 
-/* ── Features ─────────────────────────────────────────────── */
-function Features() {
-  return (
-    <section id="features" style={{ padding: "120px clamp(1.5rem, 5vw, 6rem)", maxWidth: 1200, margin: "0 auto" }}>
-      <RevealDiv>
-        <SectionLabel>Capabilities</SectionLabel>
-        <SectionTitle>What's inside.</SectionTitle>
-      </RevealDiv>
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))",
-        gap: 2,
-      }}>
-        {FEATURES.map((f, i) => (
-          <RevealDiv key={f.title} delay={i * 0.06}>
-            <FeatureCard feature={f} />
-          </RevealDiv>
-        ))}
-      </div>
-    </section>
-  );
-}
+  /* ── Hero ── */
+  .hero { margin-bottom: 3rem; }
+  .hero h1 {
+    font-size: clamp(2rem, 5vw, 3rem);
+    color: var(--accent); letter-spacing: -0.03em;
+    line-height: 1.1; margin-bottom: 0.4rem;
+  }
+  .hero h1 .ver { color: var(--dim); font-weight: 300; font-size: 0.42em; vertical-align: middle; margin-left: 0.4em; }
+  .hero .sub { color: var(--fg); font-size: 1.05rem; margin-bottom: 0.5rem; }
+  .hero .desc { color: var(--dim); font-size: 0.85rem; margin-bottom: 1.75rem; max-width: 600px; }
+  .ctas { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+  .cta {
+    display: inline-block;
+    padding: 0.55rem 1.25rem; border-radius: 6px; font-size: 0.82rem;
+    text-decoration: none; transition: all 0.15s;
+    border: 1px solid var(--accent); color: var(--accent);
+    background: none; font-family: inherit; cursor: pointer;
+  }
+  .cta:hover { background: var(--accent); color: #000; text-decoration: none; }
+  .cta.dim { border-color: var(--border); color: var(--dim); }
+  .cta.dim:hover { border-color: var(--dim); background: transparent; color: var(--fg); }
 
-function FeatureCard({ feature }) {
-  const [hov, setHov] = useState(false);
-  const isNew = feature.title === "Mesh P2P" || feature.title === "Anti-Detection";
-  return (
-    <div onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
-      style={{
-        padding: "36px 32px",
-        background: hov ? "rgba(200,255,0,0.03)" : "rgba(255,255,255,0.02)",
-        border: `1px solid ${hov ? "rgba(200,255,0,0.12)" : "rgba(255,255,255,0.04)"}`,
-        transition: "all 0.35s ease", cursor: "default",
-        height: "100%", boxSizing: "border-box", position: "relative",
-      }}>
-      {isNew && (
-        <span style={{
-          position: "absolute", top: 12, right: 12,
-          fontFamily: "'IBM Plex Mono', monospace", fontSize: 9,
-          letterSpacing: "0.1em", textTransform: "uppercase",
-          padding: "3px 8px",
-          background: feature.title === "Mesh P2P" ? "rgba(0,200,255,0.12)" : "rgba(255,154,0,0.12)",
-          color: feature.title === "Mesh P2P" ? "#00c8ff" : "#ff9a00",
-          border: `1px solid ${feature.title === "Mesh P2P" ? "rgba(0,200,255,0.25)" : "rgba(255,154,0,0.25)"}`,
-        }}>NEW</span>
-      )}
-      <div style={{
-        fontFamily: "'Space Mono', monospace",
-        fontSize: 28, color: "#c8ff00", marginBottom: 20, opacity: 0.7,
-      }}>
-        {feature.icon}
-      </div>
-      <h3 style={{
-        fontFamily: "'IBM Plex Mono', monospace",
-        fontSize: 15, fontWeight: 600,
-        color: "#fff", margin: "0 0 12px", letterSpacing: "0.02em",
-      }}>
-        {feature.title}
-      </h3>
-      <p style={{
-        fontFamily: "'IBM Plex Sans', sans-serif",
-        fontSize: 14, lineHeight: 1.7,
-        color: "rgba(255,255,255,0.4)", margin: 0,
-      }}>
-        {feature.desc}
-      </p>
+  /* ── Stats strip ── */
+  .stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 1rem; margin-bottom: 3rem;
+  }
+  .stat {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1rem 1.2rem;
+  }
+  .stat .val { font-size: 1.6rem; color: var(--green); font-weight: 700; line-height: 1.2; }
+  .stat .lbl { font-size: 0.7rem; color: var(--dim); text-transform: uppercase; letter-spacing: 0.1em; margin-top: 0.15rem; }
+
+  /* ── Section headings ── */
+  h2 {
+    color: var(--accent); font-size: 0.72rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    margin: 2.5rem 0 0.9rem; padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* ── Capability cards ── */
+  .features {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.9rem; margin-bottom: 0.5rem;
+  }
+  .feature {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1rem 1.2rem;
+    transition: border-color 0.15s;
+  }
+  .feature:hover { border-color: var(--accent); }
+  .feature .name { color: var(--accent2); font-weight: 600; margin-bottom: 0.3rem; }
+  .feature p { color: var(--dim); font-size: 0.82rem; line-height: 1.6; }
+
+  /* ── Tables ── */
+  .tbl-wrap { overflow-x: auto; margin: 0.25rem 0 0.5rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th, td { text-align: left; padding: 0.45rem 0.8rem; border-bottom: 1px solid var(--border); }
+  th { color: var(--dim); font-weight: 600; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em; }
+  td:first-child { color: var(--dim); white-space: nowrap; }
+  td code { color: var(--green); }
+  .method { color: var(--accent2); font-size: 0.75rem; }
+  tr:last-child td { border-bottom: none; }
+
+  /* ── Try-it widget ── */
+  .tryit {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1.25rem; margin: 0.5rem 0;
+  }
+  .tryit-row { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+  .tryit input[type="text"] {
+    flex: 1; min-width: 200px;
+    padding: 0.55rem 0.85rem;
+    background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 5px;
+    font-family: inherit; font-size: 0.85rem;
+  }
+  .tryit input[type="text"]:focus { outline: none; border-color: var(--accent); }
+  .tryit button[type="submit"] {
+    padding: 0.55rem 1.25rem; border-radius: 5px;
+    background: var(--accent); color: #000; border: none;
+    font-family: inherit; font-size: 0.82rem; font-weight: 600;
+    cursor: pointer; transition: opacity 0.15s;
+  }
+  .tryit button[type="submit"]:hover { opacity: 0.85; }
+  .tryit button[type="submit"]:disabled { background: var(--border); color: var(--dim); cursor: not-allowed; }
+  .tryit .hint { color: var(--dim); font-size: 0.75rem; margin-top: 0.3rem; }
+  .tryit .gate {
+    color: var(--yellow); font-size: 0.82rem; margin-top: 0.5rem;
+    padding: 0.6rem 0.85rem; background: rgba(251,191,36,0.06);
+    border: 1px solid rgba(251,191,36,0.25); border-radius: 5px;
+  }
+  .tryit .result {
+    margin-top: 0.85rem; padding: 0.85rem 1rem;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+    font-size: 0.78rem; color: var(--fg);
+    max-height: 320px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .tryit .speed {
+    display: flex; align-items: baseline; gap: 0.75rem;
+    margin: 0 0 0.6rem 0; padding: 0.5rem 0.85rem;
+    background: linear-gradient(90deg, rgba(0,255,100,0.08), transparent);
+    border-left: 3px solid var(--accent); border-radius: 3px;
+  }
+  .tryit .speed.slow  { border-left-color: var(--yellow); background: linear-gradient(90deg, rgba(251,191,36,0.08), transparent); }
+  .tryit .speed.error { border-left-color: var(--red);    background: linear-gradient(90deg, rgba(255,85,85,0.08),  transparent); }
+  .tryit .speed .num {
+    font-size: 2.2rem; font-weight: 700; line-height: 1; color: var(--green);
+    letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
+  }
+  .tryit .speed.slow  .num { color: var(--yellow); }
+  .tryit .speed.error .num { color: var(--red); }
+  .tryit .speed .unit { font-size: 0.95rem; color: var(--dim); margin-left: -0.4em; }
+  .tryit .speed .lbl  { color: var(--dim); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.12em; margin-left: auto; }
+  .tryit .result .meta { color: var(--dim); margin-bottom: 0.5rem; font-size: 0.75rem; }
+  .tryit .result .meta b { color: var(--green); }
+  .tryit .result.error .meta b { color: var(--red); }
+  .tryit .spinner { display: inline-block; color: var(--accent); }
+
+  /* ── Code blocks ── */
+  pre {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1.1rem 1.25rem;
+    overflow-x: auto; font-size: 0.8rem; line-height: 1.7;
+    margin: 0.25rem 0;
+  }
+  .cm { color: var(--dim); }
+  .kw { color: var(--accent2); }
+
+  /* ── Inline ── */
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { color: var(--green); font-size: 0.82rem; }
+
+  /* ── Footer links ── */
+  .links { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 3rem; }
+  .links a {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 6px; padding: 0.5rem 1.1rem; font-size: 0.8rem;
+    transition: border-color 0.15s;
+  }
+  .links a:hover { border-color: var(--accent); text-decoration: none; }
+  .footer {
+    color: var(--dim); font-size: 0.72rem; margin-top: 1.5rem;
+    padding-top: 1.5rem; border-top: 1px solid var(--border);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
+  }
+</style>
+</head>
+<body>
+
+<!-- Topbar (auth state) -->
+<div class="topbar" id="topbar">
+  <span class="user" id="topbar-user" style="display:none">Logged in as <b id="topbar-email">…</b></span>
+  <a id="topbar-dashboard" href="/dashboard" style="display:none">Dashboard</a>
+  <button id="topbar-logout" onclick="logout()" style="display:none">Logout</button>
+  <a id="topbar-login" class="primary" href="#" onclick="login(); return false;">Login</a>
+</div>
+
+<!-- Hero -->
+<div class="hero">
+  <h1>grub 🕷 <span class="ver" id="hero-ver">v1.0.0</span></h1>
+  <p class="sub">Agentic web crawler with bot-bypass and mesh P2P.</p>
+  <p class="desc">
+    Crawl any URL — even Cloudflare, Incapsula, or DataDome.<br>
+    Returns clean markdown. Ghost Protocol vision-fallback for hard-blocked pages.<br>
+    Camoufox stealth · MCP tooling · Bounded LLM agent loop · Policy gates · Replayable traces.
+  </p>
+  <div class="ctas">
+    <a class="cta" href="#tryit">Try it</a>
+    <a class="cta" href="#api">View API</a>
+    <a class="cta" href="#quickstart">Quick Start</a>
+    <a class="cta dim" href="/health">Health</a>
+    <a class="cta dim" href="https://github.com/DeepBlueDynamics/grubcrawler">GitHub</a>
+  </div>
+</div>
+
+<!-- Live stats -->
+<div class="stats">
+  <div class="stat"><div class="val" id="s-uptime">—</div><div class="lbl">Status</div></div>
+  <div class="stat"><div class="val" id="s-tools">—</div><div class="lbl">Tools</div></div>
+  <div class="stat"><div class="val" id="s-engine">Camoufox</div><div class="lbl">Engine</div></div>
+  <div class="stat"><div class="val" id="s-mcp">MCP</div><div class="lbl">Transport</div></div>
+</div>
+
+<!-- Capabilities -->
+<h2>Capabilities</h2>
+<div class="features">
+  <div class="feature">
+    <div class="name">Crawl</div>
+    <p>Playwright + Camoufox stealth. Cookie injection, residential proxy support, automatic Cloudflare/Incapsula challenge solver.</p>
+  </div>
+  <div class="feature">
+    <div class="name">Ghost Protocol</div>
+    <p>When a page is blocked, screenshot it and extract content via vision LLM. Fallback survives most anti-bot detection.</p>
+  </div>
+  <div class="feature">
+    <div class="name">Markdown</div>
+    <p>Rust-backed extraction (<code>grub_md</code>) returning clean markdown. Body/visible char counts, content-quality classification.</p>
+  </div>
+  <div class="feature">
+    <div class="name">Agent (Mode B)</div>
+    <p>Bounded LLM loop: plan → tool call → observe. Anthropic, OpenAI, Ollama providers. Policy gates on every dispatch.</p>
+  </div>
+  <div class="feature">
+    <div class="name">MCP Server</div>
+    <p>Streamable-HTTP MCP at <code>/mcp/</code>. Exposes <code>grub_crawl</code>, <code>grub_screenshot</code>, <code>grub_diagnose</code> to any MCP client.</p>
+  </div>
+  <div class="feature">
+    <div class="name">Mesh P2P</div>
+    <p>Optional peer-to-peer mesh — crawl jobs route to the healthiest peer. Zero-trust HMAC + replay-protected nonces.</p>
+  </div>
+</div>
+
+<!-- API -->
+<h2 id="api">API</h2>
+<div class="tbl-wrap">
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  <tr><td class="method">POST</td><td><code>/api/crawl</code></td><td>Crawl URL → HTML + markdown + screenshot</td></tr>
+  <tr><td class="method">POST</td><td><code>/api/markdown</code></td><td>Crawl URL → markdown only (faster)</td></tr>
+  <tr><td class="method">POST</td><td><code>/api/batch</code></td><td>Crawl multiple URLs in one request</td></tr>
+  <tr><td class="method">POST</td><td><code>/api/jobs/crawl</code></td><td>Async job — queue and poll for result</td></tr>
+  <tr><td class="method">POST</td><td><code>/api/agent/run</code></td><td>Run bounded LLM agent on a task</td></tr>
+  <tr><td class="method">POST</td><td><code>/api/agent/ghost</code></td><td>Ghost Protocol — vision extract a blocked URL</td></tr>
+  <tr><td class="method">GET</td><td><code>/mcp/</code></td><td>MCP streamable-http transport (tools)</td></tr>
+  <tr><td class="method">GET</td><td><code>/health</code></td><td>Status, version, tool count</td></tr>
+</table>
+</div>
+<p style="color:var(--dim);font-size:0.78rem;margin-top:0.5rem">
+  All <code>/api/*</code> endpoints require <code>Authorization: Bearer &lt;ahp_token&gt;</code>.
+  Get a token from your <a href="/dashboard">dashboard</a>.
+</p>
+
+<!-- Try it -->
+<h2 id="tryit">Try it</h2>
+<div class="tryit">
+  <form id="tryit-form" onsubmit="tryCrawl(event)">
+    <div class="tryit-row">
+      <input type="text" id="tryit-url" placeholder="https://example.com" value="https://example.com">
+      <button type="submit" id="tryit-go">Crawl →</button>
     </div>
-  );
+    <div class="hint">POSTs to <code>/api/markdown</code> with your bearer token. Returns the first 1KB of markdown.</div>
+  </form>
+  <div class="gate" id="tryit-gate" style="display:none">
+    Login required to call the API. <a href="#" onclick="login(); return false;" style="color:inherit;text-decoration:underline">Log in</a> to try it.
+  </div>
+  <div class="result" id="tryit-result" style="display:none"></div>
+</div>
+
+<!-- Quick start -->
+<h2 id="quickstart">Quick start</h2>
+<pre><code><span class="cm"># Crawl → markdown</span>
+curl -X POST https://grub.nuts.services/api/markdown \
+  -H "Authorization: Bearer ahp_yourtoken" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com"}'
+
+<span class="cm"># With Camoufox warmup (for Cloudflare-protected sites)</span>
+curl -X POST https://grub.nuts.services/api/markdown \
+  -H "Authorization: Bearer ahp_yourtoken" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://target.com", "options": {"warmup": true}}'
+
+<span class="cm"># Inject pre-solved cookies to bypass challenges</span>
+curl -X POST https://grub.nuts.services/api/markdown \
+  -H "Authorization: Bearer ahp_yourtoken" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://target.com", "options": {"cookies": {"visid_incap_X": "..."}}}'
+
+<span class="cm"># Add as MCP server in Claude Code</span>
+claude mcp add grubcrawler \
+  --transport http \
+  --header "Authorization: Bearer ahp_yourtoken" \
+  https://grub.nuts.services/mcp/</code></pre>
+
+<!-- Footer links -->
+<div class="links">
+  <a href="/docs">Docs</a>
+  <a href="/health">Health</a>
+  <a href="/mcp/">MCP</a>
+  <a href="https://github.com/DeepBlueDynamics/grubcrawler">GitHub</a>
+</div>
+<div class="footer">
+  <span>grub · DeepBlue Dynamics</span>
+  <span><span id="footer-rev">—</span></span>
+</div>
+
+<script>
+const AUTH_BASE = 'https://auth.nuts.services';
+const SELF_BASE = location.origin;
+
+function getToken() { return localStorage.getItem('nuts_session_token') || ''; }
+
+function decodeJwtEmail(jwt) {
+  try {
+    const payload = JSON.parse(atob(jwt.split('.')[1]));
+    return payload.sub || payload.email || '';
+  } catch (e) { return ''; }
 }
 
-/* ── Mesh (live peer widget) ──────────────────────────────── */
-function MeshSection() {
-  const health = usePoller("/health", 15000);
-  const meshEnabled = health.data?.mesh != null;
-  const peers = usePoller("/mesh/peers", 10000, meshEnabled);
+function applyAuthState() {
+  // 1. Capture ?token= from URL (after auth redirect) into localStorage.
+  const params = new URLSearchParams(location.search);
+  const urlToken = params.get('token');
+  if (urlToken) {
+    localStorage.setItem('nuts_session_token', urlToken);
+    history.replaceState({}, '', location.pathname + location.hash);
+  }
 
-  return (
-    <section id="mesh" style={{ padding: "120px clamp(1.5rem, 5vw, 6rem)", maxWidth: 1200, margin: "0 auto" }}>
-      <RevealDiv>
-        <SectionLabel>Distributed</SectionLabel>
-        <SectionTitle>Mesh P2P.</SectionTitle>
-      </RevealDiv>
+  const token = getToken();
+  const loggedIn = !!token;
+  const email = loggedIn ? decodeJwtEmail(token) : '';
 
-      {/* Architecture diagram */}
-      <RevealDiv delay={0.1}>
-        <div style={{
-          padding: "40px 36px",
-          background: "rgba(0,200,255,0.02)",
-          border: "1px solid rgba(0,200,255,0.08)",
-          marginBottom: 32,
-        }}>
-          <pre style={{
-            fontFamily: "'IBM Plex Mono', monospace", fontSize: 13,
-            color: "rgba(255,255,255,0.5)", lineHeight: 1.8,
-            margin: 0, overflow: "auto", whiteSpace: "pre",
-          }}>{`
-  ┌──────────────┐     gossip      ┌──────────────┐
-  │   Node A     │◄───────────────►│   Node B     │
-  │  tools: 17   │                 │  tools: 17   │
-  │  load: 0.3   │     1-hop       │  load: 0.7   │
-  └──────┬───────┘   execution     └──────┬───────┘
-         │                                │
-         │         ┌──────────────┐       │
-         └────────►│   Node C     │◄──────┘
-                   │  tools: 17   │
-                   │  load: 0.1   │
-                   └──────────────┘
-         heartbeat every 30s · peer timeout 90s
-         load-aware routing · no single point of failure`}
-          </pre>
-        </div>
-      </RevealDiv>
+  document.getElementById('topbar-user').style.display      = loggedIn && email ? '' : 'none';
+  document.getElementById('topbar-dashboard').style.display = loggedIn ? '' : 'none';
+  document.getElementById('topbar-logout').style.display    = loggedIn ? '' : 'none';
+  document.getElementById('topbar-login').style.display     = loggedIn ? 'none' : '';
+  if (email) document.getElementById('topbar-email').textContent = email;
 
-      {/* Live peer widget */}
-      <RevealDiv delay={0.2}>
-        <div style={{
-          border: "1px solid rgba(0,200,255,0.1)",
-          background: "rgba(0,200,255,0.02)",
-        }}>
-          <div style={{
-            padding: "16px 24px",
-            borderBottom: "1px solid rgba(0,200,255,0.08)",
-            display: "flex", alignItems: "center", gap: 10,
-          }}>
-            <div style={{
-              width: 8, height: 8, borderRadius: "50%",
-              background: meshEnabled ? "#00c8ff" : "rgba(255,255,255,0.2)",
-              animation: meshEnabled ? "pulse 2s ease-in-out infinite" : "none",
-            }} />
-            <span style={{
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 12,
-              color: "rgba(255,255,255,0.4)", letterSpacing: "0.06em", textTransform: "uppercase",
-            }}>
-              Live Mesh Peers
-            </span>
-            <span style={{
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
-              color: "rgba(255,255,255,0.15)", marginLeft: "auto",
-            }}>
-              {meshEnabled ? "polling /mesh/peers" : "mesh not enabled"}
-            </span>
-          </div>
-
-          <div style={{ padding: "24px", minHeight: 100 }}>
-            {!meshEnabled && (
-              <div style={{
-                fontFamily: "'IBM Plex Mono', monospace", fontSize: 13,
-                color: "rgba(255,255,255,0.25)", textAlign: "center", padding: "32px 0",
-              }}>
-                Mesh is not enabled on this node.<br />
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>
-                  Set MESH_ENABLED=true and MESH_SECRET to activate.
-                </span>
-              </div>
-            )}
-            {meshEnabled && peers.error && (
-              <div style={{
-                fontFamily: "'IBM Plex Mono', monospace", fontSize: 13,
-                color: "rgba(255,154,0,0.7)", textAlign: "center", padding: "32px 0",
-              }}>
-                Failed to fetch peers: {peers.error}
-              </div>
-            )}
-            {meshEnabled && peers.data && (
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-                gap: 12,
-              }}>
-                {(peers.data.peers || []).length === 0 && (
-                  <div style={{
-                    fontFamily: "'IBM Plex Mono', monospace", fontSize: 13,
-                    color: "rgba(255,255,255,0.25)", padding: "16px 0",
-                  }}>
-                    No peers discovered yet. Waiting for gossip...
-                  </div>
-                )}
-                {(peers.data.peers || []).map(peer => (
-                  <div key={peer.node_id || peer.name} style={{
-                    padding: "16px 20px",
-                    background: "rgba(0,0,0,0.3)",
-                    border: "1px solid rgba(0,200,255,0.1)",
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                      <div style={{
-                        width: 6, height: 6, borderRadius: "50%",
-                        background: peer.healthy ? "#00ff88" : "#ff4444",
-                      }} />
-                      <span style={{
-                        fontFamily: "'IBM Plex Mono', monospace", fontSize: 13,
-                        color: "rgba(255,255,255,0.7)", fontWeight: 600,
-                      }}>
-                        {peer.name || peer.node_name || peer.node_id?.slice(0, 8)}
-                      </span>
-                    </div>
-                    {peer.load !== undefined && (
-                      <div style={{ marginBottom: 6 }}>
-                        <div style={{
-                          height: 4, background: "rgba(255,255,255,0.06)",
-                          borderRadius: 2, overflow: "hidden",
-                        }}>
-                          <div style={{
-                            height: "100%", borderRadius: 2,
-                            width: `${Math.min(100, (peer.load || 0) * 100)}%`,
-                            background: (peer.load || 0) > 0.8 ? "#ff4444" : (peer.load || 0) > 0.5 ? "#ff9a00" : "#00ff88",
-                            transition: "width 0.5s ease",
-                          }} />
-                        </div>
-                        <span style={{
-                          fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
-                          color: "rgba(255,255,255,0.25)", marginTop: 4, display: "block",
-                        }}>
-                          load: {((peer.load || 0) * 100).toFixed(0)}%
-                        </span>
-                      </div>
-                    )}
-                    {peer.tools && (
-                      <span style={{
-                        fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
-                        color: "rgba(0,200,255,0.5)",
-                      }}>
-                        {Array.isArray(peer.tools) ? peer.tools.length : peer.tools} tools
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </RevealDiv>
-    </section>
-  );
+  document.getElementById('tryit-gate').style.display = loggedIn ? 'none' : '';
+  document.getElementById('tryit-go').disabled = !loggedIn;
 }
 
-/* ── Architecture ─────────────────────────────────────────── */
-function Architecture() {
-  return (
-    <section id="architecture" style={{ padding: "120px clamp(1.5rem, 5vw, 6rem)", maxWidth: 1200, margin: "0 auto" }}>
-      <RevealDiv>
-        <SectionLabel>Internals</SectionLabel>
-        <SectionTitle>Agent architecture.</SectionTitle>
-      </RevealDiv>
-      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        {ARCH_LAYERS.map((layer, i) => (
-          <RevealDiv key={layer.name} delay={i * 0.06}>
-            <div style={{
-              display: "flex", flexWrap: "wrap", alignItems: "center",
-              padding: "24px 28px",
-              background: `rgba(200,255,0,${0.012 + i * 0.005})`,
-              border: "1px solid rgba(255,255,255,0.04)",
-              gap: 14,
-            }}>
-              <div style={{
-                fontFamily: "'IBM Plex Mono', monospace",
-                fontSize: 13, fontWeight: 600,
-                color: "#c8ff00", letterSpacing: "0.04em",
-                opacity: 0.8, minWidth: 180,
-              }}>
-                {String(i).padStart(2, "0")} {layer.name}
-              </div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", flex: 1 }}>
-                {layer.items.map(item => (
-                  <span key={item} style={{
-                    fontFamily: "'IBM Plex Mono', monospace", fontSize: 12,
-                    padding: "5px 12px",
-                    background: "rgba(0,0,0,0.3)",
-                    border: "1px solid rgba(255,255,255,0.06)",
-                    color: "rgba(255,255,255,0.5)",
-                    letterSpacing: "0.02em", whiteSpace: "nowrap",
-                  }}>
-                    {item}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </RevealDiv>
-        ))}
-      </div>
-      <RevealDiv delay={0.4}>
-        <div style={{
-          marginTop: 48, display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 300px), 1fr))",
-          gap: 2,
-        }}>
-          {[
-            { mode: "A", title: "Endpoint Mode", desc: "Direct REST + MCP tool calls for deterministic extraction and orchestration.", color: "#c8ff00" },
-            { mode: "B", title: "Agent Mode", desc: "Autonomous loop: plan \u2192 execute \u2192 observe with policy gates and trace output.", color: "#00ffc8" },
-          ].map(m => (
-            <div key={m.mode} style={{
-              padding: "40px 36px",
-              background: "rgba(255,255,255,0.02)",
-              border: "1px solid rgba(255,255,255,0.04)",
-            }}>
-              <div style={{
-                fontFamily: "'Space Mono', monospace",
-                fontSize: 48, fontWeight: 700,
-                color: m.color, opacity: 0.2, lineHeight: 1, marginBottom: 16,
-              }}>{m.mode}</div>
-              <h3 style={{
-                fontFamily: "'IBM Plex Mono', monospace",
-                fontSize: 15, fontWeight: 600,
-                color: "#fff", margin: "0 0 10px",
-              }}>{m.title}</h3>
-              <p style={{
-                fontFamily: "'IBM Plex Sans', sans-serif",
-                fontSize: 14, lineHeight: 1.7,
-                color: "rgba(255,255,255,0.4)", margin: 0,
-              }}>{m.desc}</p>
-            </div>
-          ))}
-        </div>
-      </RevealDiv>
-    </section>
-  );
+function login() {
+  const ret = encodeURIComponent(SELF_BASE + '/auth/callback');
+  location.href = AUTH_BASE + '/login?return_url=' + ret;
 }
 
-/* ── API ──────────────────────────────────────────────────── */
-function ApiSection() {
-  const [hovered, setHovered] = useState(null);
-  let endpointIndex = 0;
-  const total = API_GROUPS.reduce((s, g) => s + g.endpoints.length, 0);
-
-  return (
-    <section id="api" style={{ padding: "120px clamp(1.5rem, 5vw, 6rem)", maxWidth: 1200, margin: "0 auto" }}>
-      <RevealDiv>
-        <SectionLabel>Endpoints</SectionLabel>
-        <SectionTitle>{total} endpoints and {MCP_TOOLS.length} MCP tools.</SectionTitle>
-      </RevealDiv>
-
-      <div style={{ display: "flex", flexDirection: "column" }}>
-        {API_GROUPS.map((group, gi) => (
-          <div key={group.name}>
-            <RevealDiv delay={gi * 0.05}>
-              <div style={{
-                padding: "12px 24px",
-                borderTop: gi === 0 ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(255,255,255,0.04)",
-                borderBottom: "1px solid rgba(255,255,255,0.04)",
-                background: "rgba(255,255,255,0.02)",
-                fontFamily: "'IBM Plex Mono', monospace", fontSize: 11,
-                letterSpacing: "0.12em", textTransform: "uppercase",
-                color: "rgba(200,255,0,0.75)",
-              }}>
-                {group.name}
-                <span style={{ color: "rgba(255,255,255,0.15)", marginLeft: 8 }}>{group.endpoints.length}</span>
-              </div>
-            </RevealDiv>
-            {group.endpoints.map((ep) => {
-              endpointIndex++;
-              const ri = endpointIndex;
-              const methodColor = ep.method === "POST" ? "#c8ff00" : ep.method === "WS" ? "#ff9a00" : "#00c8ff";
-              return (
-                <div key={group.name + ep.path + ep.method}
-                  onMouseEnter={() => setHovered(ri)} onMouseLeave={() => setHovered(null)}
-                  style={{
-                    display: "flex", flexWrap: "wrap", alignItems: "center",
-                    padding: "14px 24px", gap: 14,
-                    borderBottom: "1px solid rgba(255,255,255,0.04)",
-                    background: hovered === ri ? "rgba(200,255,0,0.02)" : "transparent",
-                    transition: "background 0.25s", cursor: "default",
-                  }}>
-                  <span style={{
-                    fontFamily: "'IBM Plex Mono', monospace",
-                    fontSize: 11, fontWeight: 700, color: methodColor,
-                    letterSpacing: "0.08em", opacity: 0.8, minWidth: 48,
-                  }}>{ep.method}</span>
-                  <span style={{
-                    fontFamily: "'IBM Plex Mono', monospace", fontSize: 13,
-                    color: "rgba(255,255,255,0.7)", flex: 1, minWidth: 180,
-                  }}>{ep.path}</span>
-                  <span style={{
-                    fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13,
-                    color: "rgba(255,255,255,0.3)",
-                  }}>{ep.desc}</span>
-                  <span style={{
-                    marginLeft: "auto",
-                    fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
-                    letterSpacing: "0.06em", textTransform: "uppercase",
-                    color: ep.status === "Live" ? "rgba(200,255,0,0.7)" : "rgba(255,154,0,0.75)",
-                    border: `1px solid ${ep.status === "Live" ? "rgba(200,255,0,0.25)" : "rgba(255,154,0,0.35)"}`,
-                    padding: "2px 7px", flexShrink: 0,
-                  }}>{ep.status}</span>
-                </div>
-              );
-            })}
-          </div>
-        ))}
-      </div>
-
-      {/* Curl examples */}
-      <RevealDiv delay={0.3}>
-        <pre style={{
-          marginTop: 48, padding: "28px 32px",
-          background: "rgba(255,255,255,0.02)",
-          border: "1px solid rgba(255,255,255,0.06)",
-          fontFamily: "'IBM Plex Mono', monospace",
-          fontSize: 13, lineHeight: 2,
-          color: "rgba(255,255,255,0.45)",
-          overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all",
-        }}>
-          <span style={{ color: "rgba(255,255,255,0.2)" }}>$</span>{" "}
-          <span style={{ color: "#c8ff00" }}>curl</span>{" "}
-          -X POST http://localhost:6792/api/markdown \{"\n"}
-          {"  "}-H <span style={{ color: "#00c8ff" }}>"Content-Type: application/json"</span> \{"\n"}
-          {"  "}-d <span style={{ color: "#00c8ff" }}>{"'{\"url\": \"https://example.com\", \"customer_id\": \"demo\"}'"}
-          </span>
-        </pre>
-      </RevealDiv>
-      <RevealDiv delay={0.32}>
-        <pre style={{
-          marginTop: 8, padding: "28px 32px",
-          background: "rgba(255,255,255,0.02)",
-          border: "1px solid rgba(255,255,255,0.06)",
-          fontFamily: "'IBM Plex Mono', monospace",
-          fontSize: 13, lineHeight: 2,
-          color: "rgba(255,255,255,0.45)",
-          overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all",
-        }}>
-          <span style={{ color: "rgba(255,255,255,0.2)" }}>$</span>{" "}
-          <span style={{ color: "#c8ff00" }}>curl</span>{" "}
-          -X POST http://localhost:6792/api/agent/run \{"\n"}
-          {"  "}-H <span style={{ color: "#00c8ff" }}>"Content-Type: application/json"</span> \{"\n"}
-          {"  "}-d <span style={{ color: "#00c8ff" }}>{"'{\"task\": \"Find pricing on example.com\", \"max_steps\": 10}'"}
-          </span>
-        </pre>
-      </RevealDiv>
-
-      {/* MCP tools */}
-      <RevealDiv delay={0.36}>
-        <div style={{
-          marginTop: 24, border: "1px solid rgba(255,255,255,0.06)",
-          background: "rgba(255,255,255,0.015)", padding: "24px",
-        }}>
-          <div style={{
-            fontFamily: "'IBM Plex Mono', monospace", fontSize: 11,
-            letterSpacing: "0.14em", textTransform: "uppercase",
-            color: "rgba(200,255,0,0.65)", marginBottom: 14,
-          }}>
-            MCP Tools ({MCP_TOOLS.length})
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {MCP_TOOLS.map(tool => {
-              const isMesh = tool.startsWith("mesh_");
-              return (
-                <span key={tool} style={{
-                  fontFamily: "'IBM Plex Mono', monospace", fontSize: 12,
-                  padding: "5px 11px",
-                  border: `1px solid ${isMesh ? "rgba(0,200,255,0.25)" : "rgba(200,255,0,0.2)"}`,
-                  background: isMesh ? "rgba(0,200,255,0.04)" : "rgba(200,255,0,0.04)",
-                  color: "rgba(255,255,255,0.65)",
-                }}>
-                  {tool}
-                </span>
-              );
-            })}
-          </div>
-        </div>
-      </RevealDiv>
-    </section>
-  );
+function logout() {
+  localStorage.removeItem('nuts_session_token');
+  applyAuthState();
 }
 
-/* ── Live Status ──────────────────────────────────────────── */
-function LiveStatus() {
-  const health = usePoller("/health", 15000);
+async function tryCrawl(ev) {
+  ev.preventDefault();
+  const token = getToken();
+  if (!token) { login(); return; }
 
-  return (
-    <section id="status" style={{ padding: "120px clamp(1.5rem, 5vw, 6rem)", maxWidth: 1200, margin: "0 auto" }}>
-      <RevealDiv>
-        <SectionLabel>Live</SectionLabel>
-        <SectionTitle>Node status.</SectionTitle>
-      </RevealDiv>
-      <RevealDiv delay={0.1}>
-        <div style={{
-          border: "1px solid rgba(255,255,255,0.06)",
-          background: "rgba(255,255,255,0.015)",
-        }}>
-          <div style={{
-            padding: "16px 24px",
-            borderBottom: "1px solid rgba(255,255,255,0.06)",
-            display: "flex", alignItems: "center", gap: 10,
-          }}>
-            <div style={{
-              width: 8, height: 8, borderRadius: "50%",
-              background: health.data ? "#00ff88" : health.error ? "#ff4444" : "rgba(255,255,255,0.2)",
-              animation: health.data ? "pulse 2s ease-in-out infinite" : "none",
-            }} />
-            <span style={{
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 12,
-              color: "rgba(255,255,255,0.4)", letterSpacing: "0.06em", textTransform: "uppercase",
-            }}>
-              {health.data ? "Healthy" : health.error ? "Unreachable" : "Connecting..."}
-            </span>
-            <span style={{
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
-              color: "rgba(255,255,255,0.15)", marginLeft: "auto",
-            }}>
-              polling /health every 15s
-            </span>
-          </div>
+  const url = document.getElementById('tryit-url').value.trim();
+  if (!url) return;
+  const btn = document.getElementById('tryit-go');
+  const out = document.getElementById('tryit-result');
+  btn.disabled = true;
+  const t0 = performance.now();
+  out.style.display = '';
+  out.classList.remove('error');
+  out.innerHTML = '<div class="meta">crawling <b>' + url + '</b>…</div>';
 
-          {health.error && (
-            <div style={{
-              padding: "32px 24px", textAlign: "center",
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 13,
-              color: "rgba(255,154,0,0.7)",
-            }}>
-              Cannot reach server. Is gnosis-crawl running on this host?
-            </div>
-          )}
+  try {
+    const res = await fetch('/api/markdown', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    const ms = Math.round(performance.now() - t0);
+    if (res.status === 401) {
+      out.classList.add('error');
+      out.innerHTML = '<div class="meta"><b>401</b> — token rejected. <a href="#" onclick="logout(); return false;">Log out</a> and try again.</div>';
+      return;
+    }
+    if (!res.ok) {
+      out.classList.add('error');
+      const txt = await res.text();
+      out.innerHTML = '<div class="meta"><b>' + res.status + '</b> · ' + ms + 'ms</div>' +
+        '<pre style="background:transparent;border:0;padding:0;font-size:0.78rem">' + escapeHtml(txt.slice(0, 1024)) + '</pre>';
+      return;
+    }
+    const data = await res.json();
+    const md = (data.markdown || '');
+    const preview = md.slice(0, 1024);
+    const session = data.metadata && data.metadata.session_id;
+    const file = data.metadata && data.metadata.storage && data.metadata.storage.result_file;
+    const cacheUrl = (session && file)
+      ? `/api/sessions/${session}/file?filename=${encodeURIComponent(file)}&bearer_token=${encodeURIComponent(token)}`
+      : null;
 
-          {health.data && (
-            <div style={{
-              padding: "24px",
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-              gap: 16,
-            }}>
-              {[
-                { label: "Service", value: health.data.service || "gnosis-crawl" },
-                { label: "Version", value: health.data.version || "?" },
-                { label: "Tools", value: health.data.tools_registered ?? "?" },
-                { label: "Cloud Mode", value: health.data.cloud_mode ? "Yes" : "No" },
-                ...(health.data.mesh ? [
-                  { label: "Mesh Node", value: health.data.mesh.node_name || health.data.mesh.node_id?.slice(0, 8) },
-                  { label: "Mesh Peers", value: `${health.data.mesh.healthy_peers}/${health.data.mesh.peers} healthy` },
-                ] : [
-                  { label: "Mesh", value: "Disabled" },
-                ]),
-              ].map(item => (
-                <div key={item.label} style={{
-                  padding: "16px 20px",
-                  background: "rgba(0,0,0,0.2)",
-                  border: "1px solid rgba(255,255,255,0.04)",
-                }}>
-                  <div style={{
-                    fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
-                    letterSpacing: "0.1em", textTransform: "uppercase",
-                    color: "rgba(255,255,255,0.25)", marginBottom: 8,
-                  }}>{item.label}</div>
-                  <div style={{
-                    fontFamily: "'IBM Plex Mono', monospace", fontSize: 18,
-                    color: "#fff", fontWeight: 600,
-                  }}>{item.value}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </RevealDiv>
-    </section>
-  );
+    const speedClass = ms < 2000 ? '' : (ms < 8000 ? 'slow' : 'slow');
+    const speedDisplay = ms < 1000
+      ? `<span class="num">${ms}</span><span class="unit">ms</span>`
+      : `<span class="num">${(ms/1000).toFixed(2)}</span><span class="unit">s</span>`;
+
+    out.innerHTML =
+      `<div class="speed ${speedClass}">${speedDisplay}<span class="lbl">crawl time</span></div>` +
+      '<div class="meta">' +
+        'status=<b>' + (data.status_code ?? '?') + '</b> · ' +
+        'quality=<b>' + (data.content_quality || '?') + '</b> · ' +
+        'chars=<b>' + (data.body_char_count || 0) + '</b>' +
+        (cacheUrl ? ' · <a href="' + cacheUrl + '" target="_blank">full markdown ↗</a>' : '') +
+      '</div>' +
+      escapeHtml(preview) +
+      (md.length > 1024 ? '\n\n[…' + (md.length - 1024) + ' more chars — open the full markdown link above]' : '');
+  } catch (e) {
+    out.classList.add('error');
+    out.innerHTML = '<div class="meta"><b>Network error</b>: ' + escapeHtml(String(e)) + '</div>';
+  } finally {
+    btn.disabled = false;
+  }
 }
 
-/* ── Try It ───────────────────────────────────────────────── */
-function TryIt() {
-  const [url, setUrl] = useState("https://example.com");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState(null);
-  const [focused, setFocused] = useState(false);
-
-  const handleCrawl = useCallback(() => {
-    if (!url.trim() || loading) return;
-    setLoading(true);
-    setResult(null);
-    setError(null);
-    const start = Date.now();
-    fetch("/api/markdown", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: url.trim(), customer_id: "site-demo" }),
-    })
-      .then(r => r.json())
-      .then(d => {
-        const elapsed = Date.now() - start;
-        if (d.error) {
-          setError(d.error?.message || d.details?.message || JSON.stringify(d));
-        } else {
-          const md = d.markdown || d.content || d.data?.markdown || d.data?.content || "";
-          const words = md.split(/\s+/).filter(Boolean).length;
-          setResult({ markdown: md, elapsed, words, url: url.trim() });
-        }
-      })
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [url, loading]);
-
-  return (
-    <section id="try-it" style={{ padding: "120px clamp(1.5rem, 5vw, 6rem)", maxWidth: 1200, margin: "0 auto" }}>
-      <RevealDiv>
-        <SectionLabel>Demo</SectionLabel>
-        <SectionTitle>Try it live.</SectionTitle>
-        <p style={{
-          fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 15, lineHeight: 1.7,
-          color: "rgba(255,255,255,0.35)", maxWidth: 520, margin: "-48px 0 48px",
-        }}>
-          Enter a URL to crawl. Results are extracted as markdown via the /api/markdown endpoint.
-        </p>
-      </RevealDiv>
-
-      <RevealDiv delay={0.1}>
-        <div style={{
-          border: "1px solid rgba(200,255,0,0.1)",
-          background: "rgba(200,255,0,0.02)",
-          maxWidth: 700,
-        }}>
-          <div style={{
-            padding: "16px 24px",
-            borderBottom: "1px solid rgba(200,255,0,0.08)",
-            display: "flex", alignItems: "center", gap: 10,
-          }}>
-            <span style={{
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 12,
-              color: "rgba(255,255,255,0.4)", letterSpacing: "0.06em", textTransform: "uppercase",
-            }}>
-              POST /api/markdown
-            </span>
-          </div>
-
-          <div style={{ padding: "20px 24px" }}>
-            <div style={{
-              display: "flex", gap: 12, alignItems: "center",
-              padding: "12px 16px",
-              border: `1px solid ${focused ? "rgba(200,255,0,0.3)" : "rgba(255,255,255,0.06)"}`,
-              background: "rgba(0,0,0,0.25)",
-              transition: "border-color 0.25s",
-            }}>
-              <span style={{
-                fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: "rgba(200,255,0,0.3)",
-              }}>&gt;</span>
-              <input
-                value={url} onChange={e => setUrl(e.target.value)}
-                onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-                onKeyDown={e => { if (e.key === "Enter") handleCrawl(); }}
-                placeholder="https://example.com"
-                style={{
-                  flex: 1, background: "none", border: "none", outline: "none",
-                  fontFamily: "'IBM Plex Mono', monospace", fontSize: 13,
-                  color: "rgba(255,255,255,0.7)", minWidth: 0,
-                }}
-              />
-              <button onClick={handleCrawl} disabled={loading}
-                style={{
-                  fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, fontWeight: 600,
-                  padding: "8px 20px",
-                  background: loading ? "rgba(200,255,0,0.3)" : "#c8ff00",
-                  color: "#080808", border: "none", cursor: loading ? "wait" : "pointer",
-                  letterSpacing: "0.06em", textTransform: "uppercase",
-                  transition: "all 0.2s", flexShrink: 0,
-                }}>
-                {loading ? "Crawling..." : "Crawl"}
-              </button>
-            </div>
-          </div>
-
-          {error && (
-            <div style={{
-              padding: "16px 24px",
-              borderTop: "1px solid rgba(255,68,68,0.15)",
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 13,
-              color: "rgba(255,68,68,0.8)", lineHeight: 1.6,
-            }}>
-              Error: {error}
-            </div>
-          )}
-
-          {result && (
-            <div style={{ borderTop: "1px solid rgba(200,255,0,0.08)" }}>
-              <div style={{
-                padding: "12px 24px",
-                display: "flex", gap: 20, flexWrap: "wrap",
-                fontFamily: "'IBM Plex Mono', monospace", fontSize: 11,
-                color: "rgba(255,255,255,0.35)",
-              }}>
-                <span>{result.elapsed}ms</span>
-                <span>{result.words} words</span>
-                <span>{result.url}</span>
-              </div>
-              <div style={{
-                padding: "16px 24px", maxHeight: 400, overflowY: "auto",
-                fontFamily: "'IBM Plex Mono', monospace", fontSize: 13,
-                color: "rgba(255,255,255,0.55)", lineHeight: 1.7,
-                whiteSpace: "pre-wrap", wordBreak: "break-word",
-                background: "rgba(0,0,0,0.2)",
-              }}>
-                {result.markdown || "(empty result)"}
-              </div>
-            </div>
-          )}
-        </div>
-      </RevealDiv>
-    </section>
-  );
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-/* ── Footer ───────────────────────────────────────────────── */
-function Footer() {
-  return (
-    <footer style={{
-      padding: "64px clamp(1.5rem, 5vw, 6rem) 48px",
-      borderTop: "1px solid rgba(255,255,255,0.04)",
-      display: "flex", justifyContent: "space-between", alignItems: "end",
-      flexWrap: "wrap", gap: 24,
-      maxWidth: 1200, margin: "0 auto",
-    }}>
-      <div>
-        <div style={{
-          fontFamily: "'IBM Plex Mono', monospace",
-          fontSize: 14, fontWeight: 700, color: "#c8ff00", marginBottom: 8,
-        }}>
-          GRUB CRAWLER
-        </div>
-        <p style={{
-          fontFamily: "'IBM Plex Sans', sans-serif",
-          fontSize: 13, color: "rgba(255,255,255,0.25)",
-          margin: 0, lineHeight: 1.6,
-        }}>
-          Spiritual successor to Grub (est. 2000).<br />
-          The distributed web crawler, reborn. v2.0 &middot; 2026.
-        </p>
-      </div>
-      <div style={{
-        fontFamily: "'IBM Plex Mono', monospace",
-        fontSize: 11, color: "rgba(255,255,255,0.15)",
-        letterSpacing: "0.06em", display: "flex", gap: 20, flexWrap: "wrap",
-      }}>
-        <span>Open Source &middot; Gnosis Project</span>
-        <a href="https://github.com/deepbluedynamics/gnosis-crawl"
-          target="_blank" rel="noopener noreferrer"
-          style={{ color: "rgba(200,255,0,0.4)", textDecoration: "none" }}>
-          GitHub
-        </a>
-      </div>
-    </footer>
-  );
+async function loadHealth() {
+  try {
+    const res = await fetch('/health');
+    if (!res.ok) return;
+    const d = await res.json();
+    document.getElementById('s-uptime').textContent = (d.status || '') === 'healthy' ? '✓' : '✕';
+    document.getElementById('s-tools').textContent = d.tools_registered ?? '—';
+    document.getElementById('hero-ver').textContent = 'v' + (d.version || '1.0.0');
+    document.getElementById('footer-rev').textContent = d.service + ' · v' + (d.version || '?');
+  } catch (e) { /* ignore */ }
 }
 
-/* ── App ──────────────────────────────────────────────────── */
-function GrubSite() {
-  const [activeSection, setActiveSection] = useState("");
-  const [introDone, setIntroDone] = useState(() => {
-    try { return window.localStorage.getItem("grub_intro_seen_v2") === "1"; } catch { return false; }
-  });
-
-  useEffect(() => {
-    const sections = ["why-grub", "features", "mesh", "architecture", "api", "status", "try-it"];
-    const obs = new IntersectionObserver(
-      (entries) => { entries.forEach(e => { if (e.isIntersecting) setActiveSection(e.target.id); }); },
-      { threshold: 0.2 }
-    );
-    sections.forEach(id => { const el = document.getElementById(id); if (el) obs.observe(el); });
-    return () => obs.disconnect();
-  }, []);
-
-  const handleNav = (id) => {
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  useEffect(() => {
-    if (!introDone) return;
-    try { window.localStorage.setItem("grub_intro_seen_v2", "1"); } catch {}
-  }, [introDone]);
-
-  return (
-    <div style={{ background: "#080808", color: "#fff", minHeight: "100vh", overflowX: "hidden" }}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap');
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        html { scroll-behavior: smooth; }
-        ::selection { background: rgba(200,255,0,0.25); color: #fff; }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #080808; }
-        ::-webkit-scrollbar-thumb { background: rgba(200,255,0,0.15); }
-        input::placeholder { color: rgba(255,255,255,0.2) !important; }
-        @keyframes pulse {
-          0%, 100% { opacity: 0.6; }
-          50% { opacity: 1; }
-        }
-        .hero-mark { display: inline-block; white-space: nowrap; }
-        .hero-mark.phase-idle {
-          color: #39ff14;
-          text-shadow: 0 0 20px rgba(57,255,20,0.28);
-        }
-        .hero-mark.phase-shake-lite {
-          color: #39ff14;
-          text-shadow: 0 0 24px rgba(57,255,20,0.32);
-          animation: toxicShakeLite 0.24s steps(2, end) infinite;
-        }
-        .hero-mark.phase-shake-hard {
-          color: #39ff14;
-          text-shadow: 0 0 26px rgba(57,255,20,0.4);
-          animation: toxicShakeHard 0.16s steps(2, end) infinite;
-        }
-        .hero-mark.phase-typing {
-          color: #39ff14;
-          text-shadow: 0 0 26px rgba(57,255,20,0.42);
-          animation: toxicShakeHard 0.16s steps(2, end) infinite;
-        }
-        .hero-mark.phase-fading {
-          color: #39ff14;
-          text-shadow: 0 0 24px rgba(57,255,20,0.35);
-          animation: toxicShakeHard 0.16s steps(2, end) infinite, fadeToYellow 1.8s linear forwards;
-        }
-        .hero-mark.phase-stable {
-          color: #ffe000;
-          text-shadow: 0 0 22px rgba(255,224,0,0.38);
-        }
-        @keyframes toxicShakeLite {
-          0%, 100% { transform: translate(0, 0); }
-          25% { transform: translate(-1px, 0px); }
-          50% { transform: translate(1px, 0px); }
-          75% { transform: translate(0px, -1px); }
-        }
-        @keyframes toxicShakeHard {
-          0%, 100% { transform: translate(0, 0); }
-          20% { transform: translate(-2px, 0px); }
-          40% { transform: translate(2px, 0px); }
-          60% { transform: translate(0px, -2px); }
-          80% { transform: translate(0px, 2px); }
-        }
-        @keyframes fadeToYellow {
-          0% { color: #39ff14; text-shadow: 0 0 24px rgba(57,255,20,0.35); }
-          100% { color: #ffe000; text-shadow: 0 0 22px rgba(255,224,0,0.38); }
-        }
-        /* Mobile nav */
-        @media (max-width: 768px) {
-          .nav-desktop { display: none !important; }
-          .nav-mobile-btn { display: block !important; }
-          .hero-row { flex-direction: column !important; text-align: center; }
-          .hero-row > div:first-child { align-items: center; }
-          .hero-image { max-width: 400px; width: 100%; margin: 0 auto; }
-        }
-        @media (min-width: 769px) {
-          .nav-mobile-btn { display: none !important; }
-        }
-      `}</style>
-      <GrainOverlay />
-      <div style={{
-        opacity: introDone ? 1 : 0, transition: "opacity 1s ease",
-        pointerEvents: introDone ? "auto" : "none",
-      }}>
-        <Nav activeSection={activeSection} onNav={handleNav} />
-      </div>
-      <Hero introDone={introDone} onIntroDone={() => setIntroDone(true)} skipIntro={introDone} />
-      <div style={{
-        opacity: introDone ? 1 : 0, transition: "opacity 1.1s ease",
-        pointerEvents: introDone ? "auto" : "none",
-      }}>
-        <WhyGrub />
-        <Features />
-        <MeshSection />
-        <Architecture />
-        <ApiSection />
-        <LiveStatus />
-        <TryIt />
-        <Footer />
-      </div>
-    </div>
-  );
-}
-
-ReactDOM.createRoot(document.getElementById("root")).render(<GrubSite />);
+applyAuthState();
+loadHealth();
 </script>
+
 </body>
 </html>

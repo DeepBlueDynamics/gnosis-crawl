@@ -46,7 +46,6 @@ storage/
 .env.local
 .env.production
 .env.cloudrun
-.env.porter
 
 # Docker
 .dockerignore

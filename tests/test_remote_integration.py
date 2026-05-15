@@ -16,7 +16,7 @@ pytestmark = pytest.mark.remote
 
 
 # Configuration from environment
-API_BASE_URL = os.getenv("GRUB_CRAWL_API_URL", "https://crawler-agent-11733-2111b026-6tr5gw8l.onporter.run/")
+API_BASE_URL = os.getenv("GRUB_CRAWL_API_URL", "https://grub.nuts.services/")
 CUSTOMER_ID = os.getenv("GRUB_CRAWL_CUSTOMER_ID", "kordless")
 BEARER_TOKEN = os.getenv("GRUB_CRAWL_BEARER_TOKEN")  # Optional
 

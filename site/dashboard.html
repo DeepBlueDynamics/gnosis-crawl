@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>grub · dashboard</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23080808'/%3E%3Ctext x='50%25' y='62%25' font-size='22' text-anchor='middle' fill='%2300ff64'%3E🕷%3C/text%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #080808; --fg: #c8c8d0; --accent: #00ff64; --accent2: #4ade80;
+    --dim: #555568; --card: #0f0f14; --border: #1a1f1a; --green: #00ff64;
+    --red: #ff5555; --yellow: #fbbf24;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+    font-size: 14px; line-height: 1.75;
+    padding: 2.5rem 2rem; max-width: 900px; margin: 0 auto;
+    overflow-wrap: break-word;
+  }
+  .topbar {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 0.75rem; margin-bottom: 2.5rem; font-size: 0.78rem;
+  }
+  .brand { font-size: 1.6rem; font-weight: 700; color: var(--accent); letter-spacing: -0.02em; }
+  .brand .crumb { color: var(--dim); margin-left: 0.5em; font-weight: 400; font-size: 0.95rem; }
+  .topbar-actions { display: flex; gap: 0.75rem; align-items: center; }
+  .topbar-actions .user { color: var(--dim); }
+  .topbar-actions .user b { color: var(--accent2); font-weight: 600; }
+  .topbar-actions a, .topbar-actions button {
+    background: none; border: 1px solid var(--border);
+    color: var(--fg); padding: 0.35rem 0.85rem; border-radius: 5px;
+    font-family: inherit; font-size: 0.78rem; cursor: pointer;
+    text-decoration: none; transition: all 0.15s;
+  }
+  .topbar-actions a:hover, .topbar-actions button:hover { border-color: var(--accent); color: var(--accent); }
+
+  h2 {
+    color: var(--accent); font-size: 0.72rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    margin: 2rem 0 0.9rem; padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  h2:first-of-type { margin-top: 0; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1.25rem 1.4rem;
+    margin-bottom: 1rem;
+  }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.4rem 0; }
+  .row + .row { border-top: 1px solid var(--border); }
+  .row .k { color: var(--dim); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; }
+  .row .v { color: var(--fg); font-size: 0.88rem; word-break: break-all; text-align: right; }
+  .row .v code { color: var(--green); }
+
+  pre {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 0.95rem 1.15rem;
+    overflow-x: auto; font-size: 0.78rem; line-height: 1.7;
+    margin: 0.5rem 0;
+  }
+  .cm { color: var(--dim); }
+  code { color: var(--green); font-size: 0.82rem; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .cta {
+    display: inline-block;
+    padding: 0.5rem 1.1rem; border-radius: 5px; font-size: 0.8rem;
+    text-decoration: none; transition: all 0.15s;
+    border: 1px solid var(--accent); color: var(--accent);
+  }
+  .cta:hover { background: var(--accent); color: #000; text-decoration: none; }
+
+  .gate {
+    color: var(--yellow); font-size: 0.85rem; margin-top: 1rem;
+    padding: 0.85rem 1rem; background: rgba(251,191,36,0.06);
+    border: 1px solid rgba(251,191,36,0.25); border-radius: 5px;
+  }
+  #loggedout { display: none; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">GRUB <span class="crumb">/ dashboard</span></div>
+  <div class="topbar-actions">
+    <span class="user" id="user-email-display" style="display:none">Logged in as <b id="user-email">…</b></span>
+    <a href="/">Home</a>
+    <button onclick="logout()">Logout</button>
+  </div>
+</div>
+
+<div id="loggedout">
+  <div class="gate">
+    You're not logged in. <a href="#" onclick="login(); return false;" style="color:inherit;text-decoration:underline">Log in</a> to view your dashboard.
+  </div>
+</div>
+
+<div id="loggedin" style="display:none">
+  <h2>Account</h2>
+  <div class="card">
+    <div class="row"><span class="k">Email</span><span class="v" id="r-email">—</span></div>
+    <div class="row"><span class="k">User ID</span><span class="v" id="r-userid">—</span></div>
+    <div class="row"><span class="k">JWT expires</span><span class="v" id="r-exp">—</span></div>
+  </div>
+
+  <h2>API tokens</h2>
+  <div class="card">
+    <p style="color:var(--dim);font-size:0.85rem;line-height:1.65">
+      Long-lived <code>ahp_</code> tokens for backend services, scripts, and MCP clients are managed
+      from your nuts-auth dashboard. Use them as the Bearer header for <code>/api/*</code> calls
+      and for <code>claude mcp add</code>.
+    </p>
+    <p style="margin-top:0.85rem">
+      <a class="cta" id="manage-tokens-link" href="https://auth.nuts.services/dashboard">Manage tokens →</a>
+    </p>
+  </div>
+
+  <h2>Hook up Claude Code (MCP)</h2>
+  <div class="card">
+    <p style="color:var(--dim);font-size:0.85rem">
+      Add grub's MCP server to Claude Code. Replace <code>ahp_yourtoken</code> with a token from the
+      <a href="https://auth.nuts.services/dashboard">tokens dashboard</a>.
+    </p>
+<pre><code><span class="cm"># Add as MCP server</span>
+claude mcp add grubcrawler \
+  --transport http \
+  --header "Authorization: Bearer ahp_yourtoken" \
+  https://grub.nuts.services/mcp/
+
+<span class="cm"># Verify it connected</span>
+claude mcp get grubcrawler</code></pre>
+  </div>
+
+  <h2>Quick links</h2>
+  <div class="card">
+    <div class="row"><span class="k">API endpoints</span><span class="v"><a href="/#api">/#api</a></span></div>
+    <div class="row"><span class="k">Try it</span><span class="v"><a href="/#tryit">/#tryit</a></span></div>
+    <div class="row"><span class="k">MCP transport</span><span class="v"><a href="/mcp/">/mcp/</a></span></div>
+    <div class="row"><span class="k">Health</span><span class="v"><a href="/health">/health</a></span></div>
+    <div class="row"><span class="k">Docs</span><span class="v"><a href="/docs">/docs</a></span></div>
+  </div>
+</div>
+
+<script>
+const AUTH_BASE = 'https://auth.nuts.services';
+const SELF_BASE = location.origin;
+
+function getToken() { return localStorage.getItem('nuts_session_token') || ''; }
+function decodeJwt(jwt) {
+  try { return JSON.parse(atob(jwt.split('.')[1])); } catch (e) { return null; }
+}
+
+function login() {
+  const ret = encodeURIComponent(SELF_BASE + '/dashboard');
+  location.href = AUTH_BASE + '/login?return_url=' + ret;
+}
+
+function logout() {
+  localStorage.removeItem('nuts_session_token');
+  location.href = '/';
+}
+
+function fmtTime(epoch) {
+  if (!epoch) return '—';
+  const d = new Date(epoch * 1000);
+  const ms = d.getTime() - Date.now();
+  const mins = Math.round(ms / 60000);
+  if (mins <= 0) return d.toLocaleString() + ' (expired)';
+  if (mins < 60) return d.toLocaleString() + ' (' + mins + ' min)';
+  return d.toLocaleString() + ' (' + Math.round(mins / 60) + 'h)';
+}
+
+(function init() {
+  // Capture ?token= from URL (post-auth redirect)
+  const params = new URLSearchParams(location.search);
+  const urlToken = params.get('token');
+  if (urlToken) {
+    localStorage.setItem('nuts_session_token', urlToken);
+    history.replaceState({}, '', '/dashboard');
+  }
+
+  const token = getToken();
+  if (!token) {
+    document.getElementById('loggedout').style.display = '';
+    return;
+  }
+
+  const payload = decodeJwt(token);
+  if (!payload) {
+    document.getElementById('loggedout').style.display = '';
+    return;
+  }
+
+  const email = payload.sub || payload.email || '—';
+  document.getElementById('user-email').textContent = email;
+  document.getElementById('user-email-display').style.display = '';
+  document.getElementById('loggedin').style.display = '';
+  document.getElementById('r-email').textContent = email;
+  document.getElementById('r-userid').innerHTML = '<code>' + (payload.user_id || payload.uid || '—') + '</code>';
+  document.getElementById('r-exp').textContent = fmtTime(payload.exp);
+
+  // Pass our JWT to auth.nuts.services so its dashboard JS can capture it into
+  // its own (origin-isolated) localStorage — avoids re-login round-trip.
+  const mgr = document.getElementById('manage-tokens-link');
+  if (mgr) mgr.href = 'https://auth.nuts.services/dashboard?token=' + encodeURIComponent(token);
+})();
+</script>
+</body>
+</html>

@@ -54,6 +54,9 @@ COPY app/ ./app/
 # Copy embedded landing page (grub-site)
 COPY site/ ./site/
 
+# Copy VERSION file — single source of truth for /health version
+COPY VERSION ./VERSION
+
 # Create storage directory
 RUN mkdir -p storage && chown -R app:app storage
 

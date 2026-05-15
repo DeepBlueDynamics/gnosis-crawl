@@ -41,6 +41,14 @@ logger = logging.getLogger(__name__)
 # Configuration
 CRAWL_SECRET_KEY = os.getenv("CRAWL_SECRET_KEY")
 
+# Single source of truth: VERSION file at repo root.
+# Cloud Build copies it into the image so /health reflects what's running.
+try:
+    _version_path = Path(__file__).resolve().parent.parent / "VERSION"
+    APP_VERSION = _version_path.read_text(encoding="utf-8").strip() if _version_path.is_file() else "dev"
+except Exception:
+    APP_VERSION = "dev"
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager"""
@@ -96,7 +104,22 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Failed to start browser pool: {e}")
 
-    yield
+    # MCP streamable-http session manager — must run inside the parent app's
+    # lifespan so its task group is alive while requests are served. Without
+    # this, /mcp/ returns 500 "Task group is not initialized".
+    try:
+        from app.mcp_server import mcp as _mcp_server
+    except Exception as e:
+        logger.error(f"Failed to import MCP server: {e}")
+        _mcp_server = None
+
+    if _mcp_server is not None:
+        async with _mcp_server.session_manager.run():
+            logger.info("MCP session manager running")
+            yield
+            logger.info("MCP session manager stopping")
+    else:
+        yield
 
     # Shutdown mesh coordinator
     if settings.mesh_enabled and getattr(app.state, "mesh_coordinator", None):
@@ -124,10 +147,10 @@ async def verify_internal_token(request: Request):
     Dependency that validates the short-lived, internal HMAC token found in
     pre-signed tool URLs and populates request.state.actor with the payload.
     """
-    # Skip auth if disabled globally (Porter/Kubernetes deployments)
+    # Skip auth if disabled globally (local docker / self-hosted deployments)
     if settings.disable_auth:
         logger.debug("Auth disabled - skipping token verification")
-        request.state.actor = {"sub": "anonymous", "agent_id": "porter"}
+        request.state.actor = {"sub": "anonymous", "agent_id": "anonymous"}
         request.state.bearer_token = "disabled"
         return
 
@@ -153,7 +176,7 @@ async def verify_internal_token(request: Request):
 app = FastAPI(
     title="Grub Crawler",
     description="Agentic web crawling service with mesh P2P",
-    version="1.0.0",
+    version=APP_VERSION,
     docs_url=None,  # Disable default docs for AHP pattern
     redoc_url=None,
     lifespan=lifespan
@@ -280,7 +303,7 @@ async def health_check():
         result = {
             "status": "healthy",
             "service": "grub-crawl",
-            "version": "1.0.0",
+            "version": APP_VERSION,
             "cloud_mode": settings.is_cloud_environment(),
             "tools_registered": len(tool_registry.tools),
         }
@@ -463,6 +486,38 @@ if _DOCS_INDEX and _DOCS_INDEX.is_file():
     async def serve_docs():
         """Serve the API documentation page."""
         return HTMLResponse(content=_docs_html, status_code=200)
+
+# Dashboard page (logged-in view, auth handled client-side via JWT in localStorage).
+_DASHBOARD_INDEX = _SITE_DIR / "dashboard.html" if _SITE_DIR and _SITE_DIR.is_dir() else None
+if _DASHBOARD_INDEX and _DASHBOARD_INDEX.is_file():
+    _dashboard_html = _DASHBOARD_INDEX.read_text(encoding="utf-8")
+
+    @app.get("/dashboard", response_class=HTMLResponse)
+    async def serve_dashboard():
+        return HTMLResponse(content=_dashboard_html, status_code=200)
+
+# Auth helpers — server-side redirect to nuts-auth, and a tiny callback
+# that stashes ?token= into localStorage then bounces to /dashboard.
+from fastapi.responses import RedirectResponse as _RedirectResponse
+
+@app.get("/login")
+async def login_redirect():
+    return _RedirectResponse(
+        url="https://auth.nuts.services/login?return_url=https://grub.nuts.services/auth/callback",
+        status_code=302,
+    )
+
+@app.get("/auth/callback", response_class=HTMLResponse)
+async def auth_callback():
+    return HTMLResponse(
+        '<!doctype html><meta charset="utf-8"><title>logging in…</title>'
+        '<script>'
+        'const t=new URLSearchParams(location.search).get("token");'
+        'if(t){localStorage.setItem("nuts_session_token",t);}'
+        'location.replace("/dashboard");'
+        '</script>'
+        '<p style="font-family:monospace;color:#888;padding:2rem">Logging you in…</p>'
+    )
 
 # AHP Tool Routes - Dynamic tool execution (CATCH-ALL - must be last)
 @app.get("/{tool_name}")
