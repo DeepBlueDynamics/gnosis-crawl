@@ -34,8 +34,32 @@ import logging
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 logger = logging.getLogger(__name__)
+
+# DNS-rebinding protection in MCP's streamable-http transport defaults to
+# localhost-only. Without an explicit allow-list, public-domain requests get
+# rejected with 421 "Invalid Host header". Add prod and local-dev hosts here.
+_transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=[
+        "grub.nuts.services",
+        "grubcrawler.dev",
+        "www.grubcrawler.dev",
+        "localhost",
+        "localhost:6792",
+        "127.0.0.1",
+        "127.0.0.1:6792",
+    ],
+    allowed_origins=[
+        "https://grub.nuts.services",
+        "https://grubcrawler.dev",
+        "https://www.grubcrawler.dev",
+        "http://localhost:6792",
+        "http://127.0.0.1:6792",
+    ],
+)
 
 mcp = FastMCP(
     "grubcrawler",
@@ -47,6 +71,7 @@ mcp = FastMCP(
     ),
     streamable_http_path="/",  # mounted at /mcp in FastAPI, so /mcp → /
     stateless_http=True,       # no session state needed for a crawl service
+    transport_security=_transport_security,
 )
 
 
