@@ -106,9 +106,10 @@ async def grub_crawl(
         timeout=timeout,
     )
 
-    if not result.get("success"):
-        error = result.get("error", "crawl failed")
-        blocked = result.get("blocked") or result.get("content_quality") == "blocked"
+    # CrawlResult is a dataclass — attribute access, not .get().
+    if not result.success:
+        error = result.error_message or "crawl failed"
+        blocked = bool(result.blocked) or result.content_quality == "blocked"
         if blocked:
             return (
                 f"[BLOCKED] Could not retrieve content from {url}.\n"
@@ -117,10 +118,10 @@ async def grub_crawl(
             )
         return f"[ERROR] {error}"
 
-    markdown = result.get("markdown") or result.get("content", "")
-    if not markdown or len(markdown.strip()) < 50:
+    markdown = (result.markdown or result.content or "").strip()
+    if not markdown or len(markdown) < 50:
         return (
-            f"[THIN CONTENT] Page returned very little text (chars={result.get('body_char_count', 0)}).\n"
+            f"[THIN CONTENT] Page returned very little text (chars={result.body_char_count or 0}).\n"
             f"URL: {url}\n"
             f"Use grub_diagnose to check if the page is blocked."
         )
