@@ -39,8 +39,14 @@ RUN playwright install --with-deps chromium
 # Install Patchright browser (stealth Chromium fork)
 RUN patchright install chromium || true
 
-# Fetch Camoufox browser binary
-RUN python -m camoufox fetch
+# Fetch Camoufox browser binary once — directly into the runtime user's
+# cache dir. Placed BEFORE COPY app/ / site/ / VERSION so app-code changes
+# don't invalidate this 700MB layer.
+# Needs root for GeoLite2 MMDB install into system packages; HOME redirect
+# puts the browser zip into /home/app/.cache/camoufox/ where USER app can
+# read it at runtime.
+RUN HOME=/home/app python -m camoufox fetch \
+    && chown -R app:app /home/app/.cache
 
 # Build and install grub_md Rust native extension
 COPY grub_md/ ./grub_md/
@@ -59,12 +65,6 @@ COPY VERSION ./VERSION
 
 # Create storage directory
 RUN mkdir -p storage && chown -R app:app storage
-
-# Fetch camoufox as root (needs write access to system packages for GeoLite2
-# MMDB), but redirect HOME so the 707MB browser binary caches into
-# /home/app/.cache/camoufox/ instead of /root/.cache/ (inaccessible at runtime).
-RUN HOME=/home/app python -m camoufox fetch \
-    && chown -R app:app /home/app/.cache
 
 # Switch to non-root user for runtime
 USER app
