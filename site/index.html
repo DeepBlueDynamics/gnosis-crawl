@@ -356,7 +356,18 @@ function applyAuthState() {
     history.replaceState({}, '', location.pathname + location.hash);
   }
 
-  const token = getToken();
+  let token = getToken();
+  // Expired JWT → wipe and treat as logged-out so the topbar shows Login
+  // instead of a stale "Logged in as ..." with a token the API will reject.
+  if (token) {
+    try {
+      const p = JSON.parse(atob(token.split('.')[1]));
+      if (p.exp && p.exp * 1000 < Date.now()) {
+        localStorage.removeItem('nuts_session_token');
+        token = '';
+      }
+    } catch (e) { /* malformed; ignore */ }
+  }
   const loggedIn = !!token;
   const email = loggedIn ? decodeJwtEmail(token) : '';
 

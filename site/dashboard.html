@@ -195,6 +195,14 @@ function fmtTime(epoch) {
     return;
   }
 
+  // Expired JWT → wipe local state and redirect to login. Don't render
+  // the dashboard with a token the server will reject.
+  if (payload.exp && payload.exp * 1000 < Date.now()) {
+    localStorage.removeItem('nuts_session_token');
+    login();
+    return;
+  }
+
   const email = payload.sub || payload.email || '—';
   document.getElementById('user-email').textContent = email;
   document.getElementById('user-email-display').style.display = '';
