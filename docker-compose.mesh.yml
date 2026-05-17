@@ -3,7 +3,7 @@
 # Usage:
 #   docker-compose -f docker-compose.mesh.yml up --build
 #
-# This starts two grub-crawl nodes that discover each other:
+# This starts two grubcrawler nodes that discover each other:
 #   Node A (local)  → http://localhost:6792
 #   Node B (cloud)  → http://localhost:6793
 #
@@ -16,7 +16,7 @@
 services:
   node-a:
     build: .
-    container_name: grub-crawl-node-a
+    container_name: grubcrawler-node-a
     ports:
       - "6792:6792"
     environment:
@@ -55,7 +55,7 @@ services:
 
   node-b:
     build: .
-    container_name: grub-crawl-node-b
+    container_name: grubcrawler-node-b
     ports:
       - "6793:6793"
     environment:
