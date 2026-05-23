@@ -18,9 +18,15 @@ services:
       - BROWSER_TIMEOUT=60000
       - ENABLE_JAVASCRIPT=true
       - ENABLE_SCREENSHOTS=true
+      - AGENT_ENABLED=true
       - AGENT_GHOST_ENABLED=true
       - AGENT_GHOST_AUTO_TRIGGER=true
       - AGENT_GHOST_VISION_PROVIDER=anthropic
+      # Internal agent LLM provider (Mode B). 'openai' or 'anthropic' or 'ollama'.
+      - AGENT_PROVIDER=${AGENT_PROVIDER:-openai}
+      # API keys for the agent + Ghost vision providers. Pulled from shell env.
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - BROWSER_ENGINE=camoufox
       - STEALTH_ENABLED=true
       - BLOCK_TRACKING_DOMAINS=true
