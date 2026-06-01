@@ -145,23 +145,66 @@ async def detect_challenge(page) -> ChallengeDetection:
     # and Managed Challenges whose DOM selectors are embedded in heavy JS.
     # Cloudflare challenge pages can be 30-50K of JS scaffolding, so the
     # threshold must be high enough to include them.
+    #
+    # Signals are split into STRONG (Cloudflare-specific tokens that essentially
+    # never appear in normal pages) and WEAK (substring-y words that can match
+    # any tech blog or HN thread mentioning the word "cloudflare"). To trip
+    # detection we require at least one STRONG signal, OR several WEAK ones.
+    # This prevents false-positives on pages like news.ycombinator.com that
+    # happen to contain the word "cloudflare" or "turnstile" in content.
     try:
         content = await page.content()
         if content and len(content) < 50000:
             content_lower = content.lower()
-            cf_signals = [
-                "cloudflare", "cf-browser-verification", "ray id",
-                "challenge-platform", "turnstile", "cf_chl_opt",
-                "performance & security by",
+            strong_signals = [
+                "cf-browser-verification",
+                "cf_chl_opt",
+                "challenge-platform",
+                "_cf_chl",
+                "performance & security by cloudflare",
+                "attention required! | cloudflare",
+                "/cdn-cgi/challenge-platform/",
+                "data-cf-",
+                "cf-mitigated",
             ]
-            matched_signals = [s for s in cf_signals if s in content_lower]
-            if len(matched_signals) >= 2:
-                logger.info(f"Challenge detected via content heuristic: {matched_signals}")
+            weak_signals = [
+                "cloudflare", "turnstile", "ray id",
+            ]
+            matched_strong = [s for s in strong_signals if s in content_lower]
+            matched_weak   = [s for s in weak_signals   if s in content_lower]
+
+            tripped = bool(matched_strong) or len(matched_weak) >= 3
+            if tripped:
+                matched = matched_strong + matched_weak
+                # Rich DEBUG so when this fires you can tell at a glance
+                # whether it's a real challenge or a false-positive on body
+                # text. Includes URL, title, content size, all matched
+                # markers, and a ±60-char excerpt around the first hit.
+                try:
+                    page_url = page.url
+                except Exception:
+                    page_url = "?"
+                try:
+                    page_title = (await page.title()) or ""
+                except Exception:
+                    page_title = ""
+                first = matched[0] if matched else ""
+                idx = content_lower.find(first) if first else -1
+                excerpt = ""
+                if idx >= 0:
+                    a = max(0, idx - 60)
+                    b = min(len(content), idx + len(first) + 60)
+                    excerpt = content[a:b].replace("\n", " ").replace("\r", " ")
+                logger.debug(
+                    "challenge heuristic tripped url=%s title=%r len=%d strong=%s weak=%s excerpt=%r",
+                    page_url, page_title[:80], len(content),
+                    matched_strong, matched_weak, excerpt[:200],
+                )
                 return ChallengeDetection(
                     detected=True,
                     challenge_type=ChallengeType.MANAGED,
-                    confidence=0.8,
-                    selector_matched=f"content_heuristic:{','.join(matched_signals[:3])}",
+                    confidence=0.9 if matched_strong else 0.7,
+                    selector_matched=f"content_heuristic:{','.join(matched[:3])}",
                 )
     except Exception:
         pass
