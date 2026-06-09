@@ -275,11 +275,24 @@ app.include_router(router, prefix="/api")  # includes /{path:path} catch-all las
 
 # MCP server — expose grub tools to Claude Code and other MCP clients
 # Mounted before the catch-all so /mcp/* routes are handled correctly.
-# Connect via: { "url": "http://localhost:6792/mcp", "transport": "streamable-http" }
+# Connect via: { "url": "http://localhost:6792/mcp/", "transport": "streamable-http" }
 try:
     from app.mcp_server import mcp as _mcp_server
     app.mount("/mcp", _mcp_server.streamable_http_app())
-    logger.info("MCP server mounted at /mcp")
+
+    # MCP's streamable-http route lives at /mcp/ (trailing slash). A request to
+    # /mcp without the slash would otherwise fall through to the catch-all 404,
+    # which is confusing for clients that drop the trailing slash. 307 keeps the
+    # method on redirect so POST handshakes survive intact.
+    @app.api_route("/mcp", methods=["GET", "POST", "DELETE"], include_in_schema=False)
+    async def _mcp_slash_redirect():
+        return JSONResponse(
+            status_code=307,
+            content={"redirect": "/mcp/"},
+            headers={"Location": "/mcp/"},
+        )
+
+    logger.info("MCP server mounted at /mcp/  (with /mcp -> /mcp/ redirect)")
 except Exception as _mcp_err:
     logger.warning("MCP server not available (install mcp package to enable): %s", _mcp_err)
 
