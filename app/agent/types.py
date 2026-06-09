@@ -93,6 +93,14 @@ class RunConfig:
     block_private_ranges: bool = True
     redact_secrets: bool = True
     persist_raw_html: bool = False
+    # When true, the engine inlines each successful tool payload into
+    # RunResult.artifacts so callers don't have to make a second round-trip
+    # to /api/sessions/.../file to read the raw markdown/HTML the agent saw.
+    return_artifacts: bool = False
+    # Bytes per inlined artifact field — keeps responses bounded when pages
+    # are large. Applied to 'html' and 'markdown' payload fields; other
+    # fields pass through untouched.
+    artifact_max_field_bytes: int = 200_000
 
 
 # ---------------------------------------------------------------------------

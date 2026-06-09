@@ -57,6 +57,35 @@ logger = logging.getLogger(__name__)
 
 NO_OP_THRESHOLD = 3  # consecutive empty/no-op responses before forced stop
 
+# Payload fields that can carry large content (truncated to artifact_max_field_bytes
+# before inlining). Everything else passes through verbatim.
+_LARGE_ARTIFACT_FIELDS = ("html", "markdown", "content", "raw_markdown", "clean_markdown")
+
+
+def _build_artifact(
+    *,
+    step_id: int,
+    tool_name: str,
+    payload: dict,
+    max_field_bytes: int,
+) -> dict:
+    """Project a tool payload into a response-safe artifact entry.
+
+    Truncates large text fields to keep response sizes bounded; the storage
+    layer still has the full versions on disk. Marks any truncated field with
+    a sibling ``<field>_truncated: true`` so callers know they're seeing a
+    preview.
+    """
+    artifact = {"step_id": step_id, "tool": tool_name}
+    for k, v in payload.items():
+        if k in _LARGE_ARTIFACT_FIELDS and isinstance(v, str) and len(v) > max_field_bytes:
+            artifact[k] = v[:max_field_bytes]
+            artifact[f"{k}_truncated"] = True
+            artifact[f"{k}_full_length"] = len(v)
+        else:
+            artifact[k] = v
+    return artifact
+
 
 # ---------------------------------------------------------------------------
 # Provider protocol (W6 will supply concrete implementations)
@@ -258,6 +287,20 @@ class AgentEngine:
                     ghost_result = await self._try_ghost_fallback(call, result, ctx, bus)
                     if ghost_result is not None:
                         results[-1] = ghost_result  # replace the blocked result
+
+                # Inline the tool payload as an artifact when the caller asked
+                # for it. The point is to let pipelines see the raw markdown/HTML
+                # the agent observed without a second round-trip to storage.
+                final_result = results[-1]
+                if ctx.config.return_artifacts and final_result.ok and isinstance(final_result.payload, dict):
+                    ctx.artifacts.append(
+                        _build_artifact(
+                            step_id=ctx.step,
+                            tool_name=call.name,
+                            payload=final_result.payload,
+                            max_field_bytes=ctx.config.artifact_max_field_bytes,
+                        )
+                    )
 
             # OBSERVE: feed results back into conversation
             ctx.state = RunState.OBSERVE

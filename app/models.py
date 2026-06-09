@@ -265,6 +265,12 @@ class AgentRunRequest(BaseModel):
     max_wall_time_ms: int = Field(default=90_000, ge=5000, le=300_000)
     allowed_domains: Optional[List[str]] = None
     allowed_tools: Optional[List[str]] = None
+    # When true, the response.artifacts array carries each tool's raw payload
+    # (markdown, HTML, status, body_*_count, etc.) so the caller sees what the
+    # agent observed without a second round-trip to /api/sessions/.../file.
+    return_artifacts: bool = False
+    # Per-artifact-field cap (bytes) for html/markdown — keeps responses bounded.
+    artifact_max_field_bytes: int = Field(default=200_000, ge=1024, le=2_000_000)
 
 
 class AgentTraceEntry(BaseModel):

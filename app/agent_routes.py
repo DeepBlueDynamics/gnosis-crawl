@@ -64,6 +64,8 @@ async def agent_run(
         run_config.allowed_domains = request.allowed_domains
     if request.allowed_tools:
         run_config.allowed_tools = request.allowed_tools
+    run_config.return_artifacts = request.return_artifacts
+    run_config.artifact_max_field_bytes = request.artifact_max_field_bytes
 
     # Wire engine
     registry = get_global_registry()
