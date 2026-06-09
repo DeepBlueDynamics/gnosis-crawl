@@ -135,8 +135,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return response
 
         # Skip auth for certain paths - CHECK THIS FIRST before any auth client access
+        # /mcp/* is bypassed because MCP clients authenticate over their own
+        # protocol-layer handshake, not a nuts-auth Bearer token.
         logger.debug(f"AuthMiddleware checking path: '{request.url.path}'")
-        if request.url.path in ["/", "/health", "/tools", "/@search", "/auth", "/docs", "/redoc", "/openapi.json", "/view", "/download", "/site", "/api/site/error", "/dashboard", "/login", "/auth/callback"]:
+        if request.url.path.startswith("/mcp") or request.url.path in ["/", "/health", "/tools", "/@search", "/auth", "/docs", "/redoc", "/openapi.json", "/view", "/download", "/site", "/api/site/error", "/dashboard", "/login", "/auth/callback"]:
             logger.debug(f"Skipping auth for path: {request.url.path}")
             try:
                 response = await call_next(request)
