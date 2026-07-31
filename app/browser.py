@@ -26,6 +26,18 @@ from app.stealth import apply_chromium_js_patches
 
 logger = logging.getLogger(__name__)
 
+
+def _is_dead_connection_error(exc: Exception) -> bool:
+    """True if exc means the Playwright driver's IPC pipe died out from under us.
+
+    Seen in production as a long-lived Cloud Run instance whose Chromium/driver
+    subprocess crashed: every subsequent new_context() call fails forever with
+    this exact error until the instance is recycled, since nothing else in the
+    request path notices the connection is gone.
+    """
+    msg = str(exc)
+    return "handler is closed" in msg or "Connection closed" in msg
+
 # Comprehensive Chromium launch args for stealth and stability.
 # Shared by BrowserEngine and BrowserPool.
 CHROMIUM_STEALTH_ARGS = [
@@ -364,8 +376,8 @@ class BrowserEngine:
     
     async def create_isolated_context(self, javascript_enabled: bool = True, proxy=None, domain: str = None, proxy_server: str = None) -> tuple[BrowserContext, Page]:
         """Create a new isolated browser context and page for concurrent operations."""
-        if not self.browser:
-            logger.info("Browser not started, initializing")
+        if not self.browser or not self.browser.is_connected():
+            logger.info("Browser not started or disconnected, (re)initializing")
             await self.start_browser(javascript_enabled=javascript_enabled)
 
         from app.stealth import apply_stealth, setup_request_interception, apply_chromium_js_patches
@@ -388,7 +400,15 @@ class BrowserEngine:
                     ctx_kwargs["user_agent"] = cached_ua
                     logger.info(f"Using cached CapSolver UA for {domain}")
 
-            context = await self.browser.new_context(**ctx_kwargs)
+            try:
+                context = await self.browser.new_context(**ctx_kwargs)
+            except Exception as e:
+                if not _is_dead_connection_error(e):
+                    raise
+                logger.warning(f"Browser connection dead on new_context, restarting: {e}")
+                await self.close()
+                await self.start_browser(javascript_enabled=javascript_enabled)
+                context = await self.browser.new_context(**ctx_kwargs)
             page = await context.new_page()
             # Stealth + request interception are built-in at C++ level
             await setup_request_interception(context)
@@ -420,7 +440,15 @@ class BrowserEngine:
         if proxy is not None:
             context_options['proxy'] = proxy
 
-        context = await self.browser.new_context(**context_options)
+        try:
+            context = await self.browser.new_context(**context_options)
+        except Exception as e:
+            if not _is_dead_connection_error(e):
+                raise
+            logger.warning(f"Browser connection dead on new_context, restarting: {e}")
+            await self.close()
+            await self.start_browser(javascript_enabled=javascript_enabled)
+            context = await self.browser.new_context(**context_options)
         page = await context.new_page()
 
         # Apply stealth patches, JS patches, and request interception
