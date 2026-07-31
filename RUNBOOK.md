@@ -153,6 +153,8 @@ This uses the legacy `cloudbuild.yaml` (Docker Hub only, no Kaniko cache, no Clo
 
 ## Gotchas
 
+- **Must run on Cloud Run `execution-environment=gen2`, not the gen1 default.** gen1 uses gVisor, a userspace syscall-emulation sandbox; Camoufox's Firefox binary segfaults (`Uncaught signal: 11`) on 100% of launch attempts under gen1 — confirmed 2026-07-31 by diffing identical images across gen1 (crashes) vs gen2 (works) vs local Docker (works, real kernel). `cloudbuild-deploy.yaml`'s deploy step passes `--execution-environment=gen2` for exactly this reason — do not remove it, and pass it on any manual `gcloud run deploy` too.
+- **`gcloud run deploy` has not reliably auto-promoted traffic to the new revision on this service** — observed twice (2026-07-31): the revision builds, deploys, and goes Ready, but the old revision keeps serving 100% until traffic is explicitly promoted. `cloudbuild-deploy.yaml` now has a `promote-traffic` step for this; if deploying manually, always follow up with `gcloud run services update-traffic grubcrawler --region us-central1 --project gnosis-459403 --to-latest` and verify with `gcloud run services describe grubcrawler --format="value(status.traffic)"`.
 - **`deploy.ps1 -Target cloudrun` deploys to the wrong service.** It hardcodes `$ServiceName = "grub-crawl"` (line 61), which is a stale duplicate Cloud Run service with no domain mapping. Production is `grubcrawler`. Use the direct `gcloud builds submit` flows above instead.
 - **Cloud Build user substitutions must start with underscore** — `_SHA` works, `SHORT_SHA` is rejected.
 - **Cold Kaniko build is still ~25 min** — only the first one after a deep Dockerfile change (e.g. changing the camoufox version). Cache lives 7 days; just don't let it expire.

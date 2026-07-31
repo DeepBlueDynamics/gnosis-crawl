@@ -47,7 +47,24 @@ steps:
       - --project=$PROJECT_ID
       - --allow-unauthenticated
       - --port=6792
+      - --execution-environment=gen2
       - --update-env-vars=GIT_SHA=${_SHA}
+
+  # `gcloud run deploy` has not been reliably shifting 100% traffic to the
+  # new revision on this service (observed twice: revision created and
+  # Ready, but the old revision kept serving until traffic was promoted
+  # explicitly). Make that step explicit instead of assuming it happened.
+  - id: promote-traffic
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    entrypoint: gcloud
+    args:
+      - run
+      - services
+      - update-traffic
+      - ${_SERVICE}
+      - --region=${_REGION}
+      - --project=$PROJECT_ID
+      - --to-latest
 
 options:
   machineType: E2_HIGHCPU_32     # 32 vCPU / 32 GB RAM — needed for camoufox snapshot
