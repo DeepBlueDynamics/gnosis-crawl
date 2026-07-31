@@ -284,7 +284,7 @@ class BrowserEngine:
         async with self._browser_lock:
             if self.browser and not self.browser.is_connected():
                 logger.info("Browser disconnected, recreating")
-                await self.close()
+                await self._close_locked()
             
             if self.browser:
                 logger.debug("Browser already running")
@@ -371,7 +371,7 @@ class BrowserEngine:
 
             except Exception as e:
                 logger.error(f"Failed to start browser: {e}", exc_info=True)
-                await self.close()
+                await self._close_locked()
                 raise
     
     async def create_isolated_context(self, javascript_enabled: bool = True, proxy=None, domain: str = None, proxy_server: str = None) -> tuple[BrowserContext, Page]:
@@ -1027,31 +1027,43 @@ class BrowserEngine:
     async def close(self) -> None:
         """Close browser and release resources."""
         async with self._browser_lock:
-            try:
-                if self.page and not self.page.is_closed():
-                    await self.page.close()
-                    self.page = None
+            await self._close_locked()
 
-                if self.context:
-                    await self.context.close()
-                    self.context = None
+    async def _close_locked(self) -> None:
+        """Actual close logic. Caller must already hold self._browser_lock.
 
-                if self.browser:
-                    await self.browser.close()
-                    self.browser = None
+        start_browser() calls this directly (instead of close()) when it
+        needs to tear down a dead/partial browser from within its own
+        `async with self._browser_lock:` block -- asyncio.Lock isn't
+        reentrant, so going through close() there would deadlock the task
+        against itself forever, wedging every future request behind the
+        never-released lock.
+        """
+        try:
+            if self.page and not self.page.is_closed():
+                await self.page.close()
+                self.page = None
 
-                if self._camoufox_cm:
-                    await self._camoufox_cm.__aexit__(None, None, None)
-                    self._camoufox_cm = None
+            if self.context:
+                await self.context.close()
+                self.context = None
 
-                if self.playwright:
-                    await self.playwright.stop()
-                    self.playwright = None
+            if self.browser:
+                await self.browser.close()
+                self.browser = None
 
-                logger.info("Browser closed successfully")
+            if self._camoufox_cm:
+                await self._camoufox_cm.__aexit__(None, None, None)
+                self._camoufox_cm = None
 
-            except Exception as e:
-                logger.error(f"Error closing browser: {e}")
+            if self.playwright:
+                await self.playwright.stop()
+                self.playwright = None
+
+            logger.info("Browser closed successfully")
+
+        except Exception as e:
+            logger.error(f"Error closing browser: {e}")
     
     async def _check_exit_ip(self):
         """Check and log the proxy exit IP address.
